@@ -9,7 +9,9 @@ export default defineConfig({
     proxy: {
       '/video_feed': 'http://localhost:5000',
       '/traffic_status': 'http://localhost:5000',
-      '/set_video_source': 'http://localhost:5000'
+      '/set_video_source': 'http://localhost:5000',
+      '/model_info': 'http://localhost:5000',
+      '/train_model': 'http://localhost:5000'
     }
   },
   build: {

@@ -268,14 +268,25 @@ traffic_state = {
 # Vehicle Detection Function
 # ---------------------------
 def detect_vehicles(frame):
+    # Resize for faster inference if frame is larger than target
+    h, w = frame.shape[:2]
+    target_w = 640
+    if w > target_w:
+        scale = target_w / w
+        frame = cv2.resize(frame, (target_w, int(h * scale)), interpolation=cv2.INTER_AREA)
+
     rgb_frame = cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)
-    results = model(rgb_frame)[0]
+    results = model(rgb_frame, verbose=False)[0]
     vehicles = []
 
     for box in results.boxes:
         class_id = int(box.cls[0])
         if class_id in VEHICLE_CLASSES:
             x1, y1, x2, y2 = map(int, box.xyxy[0])
+            # Scale bounding boxes back to original frame size
+            if w > target_w:
+                inv_scale = w / target_w
+                x1, y1, x2, y2 = int(x1 * inv_scale), int(y1 * inv_scale), int(x2 * inv_scale), int(y2 * inv_scale)
             vehicles.append((class_id, (x1, y1, x2, y2)))
 
     return vehicles
@@ -306,6 +317,8 @@ def process_frame():
     global cap, is_video_file
 
     consecutive_failures = 0
+    frame_count = 0
+    cached_vehicles = []  # Reuse previous detection on skipped frames
 
     while True:
         current_cap = cap
@@ -346,8 +359,17 @@ def process_frame():
             continue
 
         consecutive_failures = 0
+        frame_count += 1
 
-        vehicles = detect_vehicles(frame)
+        # Run detection on every other frame to halve CPU load.
+        # At ~15 fps output, this means detection runs ~7.5 times/sec
+        # which is still very responsive for traffic monitoring.
+        if frame_count % 2 == 0:
+            vehicles = detect_vehicles(frame)
+            cached_vehicles = vehicles
+        else:
+            vehicles = cached_vehicles
+
         vehicle_count = len(vehicles)
 
         for class_id, bbox in vehicles:
@@ -359,8 +381,9 @@ def process_frame():
                         cv2.FONT_HERSHEY_SIMPLEX, 0.5, color, 2)
 
         # === K-MEANS TRAFFIC CLASSIFICATION ===
-        # Add sample for continuous learning
-        kmeans_system.add_sample(vehicle_count)
+        # Only add sample when we actually ran detection
+        if frame_count % 2 == 0:
+            kmeans_system.add_sample(vehicle_count)
         
         # Classify current traffic density
         cluster, density = kmeans_system.classify(vehicle_count)
@@ -411,7 +434,7 @@ def process_frame():
         cv2.putText(frame, f"Cluster: {cluster}",
                     (20, 165), cv2.FONT_HERSHEY_SIMPLEX, 0.7, (200, 200, 200), 2)
 
-        _, buffer = cv2.imencode('.jpg', frame, [cv2.IMWRITE_JPEG_QUALITY, 80])
+        _, buffer = cv2.imencode('.jpg', frame, [cv2.IMWRITE_JPEG_QUALITY, 70])
         yield (b'--frame\r\n'
                b'Content-Type: image/jpeg\r\n\r\n' + buffer.tobytes() + b'\r\n')
 
