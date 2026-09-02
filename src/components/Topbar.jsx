@@ -9,7 +9,7 @@ function Topbar() {
     <header className="topbar">
       {/* Left */}
       <div className="topbar-left">
-        <span className="topbar-brand">Traffic Control Center</span>
+        <span className="topbar-brand">D-LOGIC Control Center</span>
         <span className="topbar-live">
           <span className="pulse-dot" />
           LIVE

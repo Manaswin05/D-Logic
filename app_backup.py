@@ -380,7 +380,6 @@ class DLOGICSimulation:
             'system_performance': 0.0,
             'communication_events': 0
         }
-        self.event_log = deque(maxlen=200)  # Store last 200 events
         
         # Initialize systems
         self.mappo_router.initialize_road_network()
@@ -398,22 +397,8 @@ class DLOGICSimulation:
         
         for agent in demo_agents:
             self.spatial_search.add_agent(agent)
-            self.log_event('SYSTEM', f'Agent {agent.id} initialized - Task: {agent.task}', 'info')
             
         self.simulation_state['total_agents'] = len(demo_agents)
-    
-    def log_event(self, source: str, message: str, event_type: str = 'info', agent_id: str = None, target_id: str = None):
-        """Log simulation events"""
-        event = {
-            'timestamp': time.time(),
-            'step': self.simulation_state['step'],
-            'source': source,
-            'message': message,
-            'type': event_type,  # 'info', 'communication', 'alert', 'success', 'warning', 'error'
-            'agent_id': agent_id,
-            'target_id': target_id
-        }
-        self.event_log.append(event)
     
     def simulation_step(self):
         """Execute one simulation step"""
@@ -427,33 +412,6 @@ class DLOGICSimulation:
         performance_sum = 0
         
         for agent_id, agent in self.spatial_search.agents.items():
-            # Check for hardware failure (0.2% chance per tick for active agents)
-            if agent.status in ['executing', 'moving'] and random.random() < 0.002:
-                agent.status = 'failed'
-                agent.speed = 0
-                self.log_event(agent_id, f'🚨 CRITICAL: Hardware failure detected on {agent_id}. Agent immobilized.', 'error', agent_id)
-                
-                # Self-healing: KD-Tree search for nearest idle agent
-                nearest_idle = None
-                min_dist = float('inf')
-                for other_id, other_agent in self.spatial_search.agents.items():
-                    if other_agent.status == 'idle' and other_id != agent_id:
-                        dist = math.sqrt((agent.position[0]-other_agent.position[0])**2 + (agent.position[1]-other_agent.position[1])**2)
-                        if dist < min_dist:
-                            min_dist = dist
-                            nearest_idle = other_agent
-                
-                if nearest_idle:
-                    nearest_idle.status = 'moving'
-                    nearest_idle.task = agent.task
-                    agent.task = 'Awaiting Recovery'
-                    self.log_event('SYSTEM', f'🔄 SELF-HEALING: Reallocated task from {agent_id} to {nearest_idle.id}', 'success', agent_id, nearest_idle.id)
-                else:
-                    self.log_event('SYSTEM', f'⚠️ SELF-HEALING PENDING: No idle agents available for {agent_id}', 'warning', agent_id)
-
-            if agent.status == 'failed':
-                continue # Skip routing and movement if failed
-
             # Get neighborhood information (Algorithm 1)
             neighborhood_info = self.spatial_search.get_local_neighborhood_info(agent_id)
             
@@ -462,19 +420,6 @@ class DLOGICSimulation:
             
             # Make routing decision using MAPPO (Algorithm 2)  
             decision = self.mappo_router.mappo_policy_decision(agent_id, local_graph)
-            
-            # Deterministic logging based on actual state changes
-            # 1. P2P communication (Only if congestion > 0.6 and has neighbors, throttled by step)
-            if len(agent.neighbors) > 0 and neighborhood_info['congestion_metric'] > 0.6:
-                if self.simulation_state['step'] % max(5, int(100/len(agent.neighbors))) == 0:
-                    neighbor_id = agent.neighbors[0]
-                    self.log_event(agent_id, f'P2P: Coordinating congestion avoidance with {neighbor_id}', 'communication', agent_id, neighbor_id)
-            
-            # 2. MAPPO Routing Decisions (Only log when behavior actually changes significantly)
-            if decision['action_type'] == 'reroute' and agent.status != 'moving':
-                self.log_event(agent_id, f'MAPPO: Executing reroute to avoid high traffic (priority: {decision["priority"]})', 'alert', agent_id)
-            elif decision['action_type'] == 'optimize_speed' and agent.speed < 20 and self.simulation_state['step'] % 10 == 0:
-                self.log_event(agent_id, f'MAPPO: Accelerating in low-traffic zone', 'success', agent_id)
             
             # Execute decision and calculate reward
             reward = self.execute_agent_decision(agent_id, decision)
@@ -487,10 +432,6 @@ class DLOGICSimulation:
             
             # Update agent position (simplified movement)
             self.update_agent_position(agent_id, decision)
-            
-            # Check for low battery deterministically (triggers exactly when crossing 20%)
-            if agent.battery < 20 and (agent.battery + 0.1) >= 20:
-                self.log_event(agent_id, f'⚠️ Battery Critical: {agent.battery:.1f}% - Initiating RTB (Return to Base)', 'warning', agent_id)
         
         # Update simulation metrics
         if decisions_made > 0:
@@ -502,10 +443,6 @@ class DLOGICSimulation:
         
         # Update traffic states
         self.update_traffic_intersections()
-        
-        # Log system-wide events occasionally
-        if self.simulation_state['step'] % 20 == 0:
-            self.log_event('SYSTEM', f'System health check - Performance: {self.simulation_state["system_performance"]:.2f}', 'info')
         
     def execute_agent_decision(self, agent_id: str, decision: Dict) -> float:
         """Execute agent decision and return reward"""
@@ -561,8 +498,6 @@ class DLOGICSimulation:
                     )
                 else:
                     # Reached target
-                    if agent.status != 'idle':
-                        self.log_event(agent_id, f'✓ Target destination reached for task: {agent.task}', 'success', agent_id)
                     agent.position = (target_x, target_y)
                     agent.status = 'idle'
         else:
@@ -640,19 +575,6 @@ class DLOGICSimulation:
         for intersection_id, state in self.mappo_router.traffic_states.items():
             intersections_data.append(asdict(state))
         
-        # Convert event log to list with formatted timestamps
-        events_list = []
-        for event in list(self.event_log):
-            events_list.append({
-                'timestamp': time.strftime('%H:%M:%S', time.localtime(event['timestamp'])),
-                'step': event['step'],
-                'source': event['source'],
-                'message': event['message'],
-                'type': event['type'],
-                'agent_id': event['agent_id'],
-                'target_id': event['target_id']
-            })
-        
         return {
             'simulation_state': self.simulation_state,
             'agents': agents_data,
@@ -671,8 +593,7 @@ class DLOGICSimulation:
                 'avg_system_performance': self.simulation_state['system_performance'],
                 'communication_efficiency': self.simulation_state['communication_events'] / max(1, self.simulation_state['total_agents']),
                 'global_reward_avg': sum(self.mappo_router.global_reward_history) / max(1, len(self.mappo_router.global_reward_history)) if self.mappo_router.global_reward_history else 0
-            },
-            'event_log': events_list  # Include event log in response
+            }
         }
 
 # Initialize D-LOGIC simulation
@@ -947,15 +868,14 @@ def algorithms_info():
     })
 
 # Serve React frontend for all non-API routes (SPA support)
-@app.route('/')
-def index():
-    return app.send_static_file('index.html')
-
-@app.errorhandler(404)
-def not_found(e):
-    # If a route is not found (e.g. /map, /dashboard), serve the React index.html
-    # so that React Router can handle the client-side routing.
-    return app.send_static_file('index.html')
+@app.route('/', defaults={'path': ''})
+@app.route('/<path:path>')
+def serve_react(path):
+    # If the path is a static file that exists, serve it
+    if path and os.path.exists(os.path.join(app.static_folder, path)):
+        return send_from_directory(app.static_folder, path)
+    # Otherwise serve index.html (React Router handles the rest)
+    return send_from_directory(app.static_folder, 'index.html')
 # ---------------------------
 # Run App
 # ---------------------------

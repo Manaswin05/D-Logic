@@ -1,65 +1,6 @@
-import React, { useState, useEffect, useMemo, useCallback, useRef } from 'react'
+import React, { useState, useEffect, useCallback, useRef } from 'react'
 import axios from 'axios'
-import { Line, Bar, Doughnut } from 'react-chartjs-2'
-import {
-  Chart as ChartJS,
-  CategoryScale,
-  LinearScale,
-  PointElement,
-  LineElement,
-  BarElement,
-  ArcElement,
-  Tooltip,
-  Legend,
-  Filler,
-} from 'chart.js'
 import './Analytics.css'
-
-ChartJS.register(
-  CategoryScale, LinearScale, PointElement, LineElement,
-  BarElement, ArcElement, Tooltip, Legend, Filler
-)
-
-/* ── Color palette (module-level constant) ─────────── */
-const C = {
-  white:  'rgba(255,255,255,0.85)',
-  white2: 'rgba(255,255,255,0.55)',
-  white3: 'rgba(255,255,255,0.35)',
-  white4: 'rgba(255,255,255,0.20)',
-  white5: 'rgba(255,255,255,0.10)',
-  red:    '#ffb4ab',
-  yellow: '#eab308',
-  green:  '#22c55e',
-  blue:   '#60a5fa',
-  purple: '#a78bfa',
-  cyan:   '#22d3ee',
-}
-
-/* ── Shared chart tooltip (module-level constant) ──── */
-const tooltipStyle = {
-  backgroundColor: '#1c1b1b',
-  borderColor: '#262626',
-  borderWidth: 1,
-  padding: 8,
-  titleColor: '#8e9192',
-  bodyColor: '#ffffff',
-  titleFont: { size: 10, family: 'JetBrains Mono' },
-  bodyFont: { size: 12, family: 'JetBrains Mono', weight: '700' },
-  cornerRadius: 4,
-  displayColors: true,
-  boxWidth: 8,
-  boxHeight: 8,
-  boxPadding: 4,
-}
-
-const gridColor = 'rgba(255,255,255,0.04)'
-const tickFont = { size: 10, family: 'JetBrains Mono' }
-
-const POLL_INTERVAL_MS = 5000
-const MAX_HISTORY = 30
-
-const typeLabels = ['Cars', 'Bikes', 'Buses', 'Trucks', 'Auto']
-const typeColors = [C.white, C.white2, C.white3, C.white4, C.white5]
 
 /* ── LocalStorage helpers ──────────────────────────── */
 function loadJSON(key, fallback) {
@@ -75,122 +16,70 @@ function saveJSON(key, value) {
   try { localStorage.setItem(key, JSON.stringify(value)) } catch { /* quota */ }
 }
 
-function Analytics() {
-  const [flowData, setFlowData] = useState({ labels: [], datasets: [{ data: [] }] })
-  const [histData, setHistData] = useState({ labels: [], datasets: [] })
-  const [pieData, setPieData] = useState({ labels: [], datasets: [] })
-  const [freqData, setFreqData] = useState({ labels: [], datasets: [] })
-  const [kpis, setKpis] = useState({ total: 0, avgPerCycle: 0, peakCount: 0, cycles: 0 })
+const POLL_INTERVAL_MS = 5000
 
-  // Mutable refs for data that persists across polls without triggering renders
-  const historyRef = useRef(loadJSON('analyticsHistory', []))
-  const typeAccumRef = useRef(loadJSON('analyticsTypeAccum', { Cars: 0, Bikes: 0, Buses: 0, Trucks: 0, Auto: 0 }))
+function Analytics() {
+  const [performanceLogs, setPerformanceLogs] = useState(loadJSON('performanceLogs', []))
+  const [simulationMetrics, setSimulationMetrics] = useState(null)
+  const [simulationLogs, setSimulationLogs] = useState(loadJSON('simulationLogs', []))
+
   const isVisibleRef = useRef(!document.hidden)
 
   // ─── Stable polling callback ───
   const poll = useCallback(async () => {
-    // Skip network request if tab is hidden — saves bandwidth and CPU
+    // Skip network request if tab is hidden
     if (!isVisibleRef.current) return
 
     try {
-      const { data } = await axios.get('/traffic_status')
-      const count = data.vehicle_count || 0
+      const simulationResponse = await axios.get('/simulation_data')
+      const simData = simulationResponse.data
+      
       const t = new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit', second: '2-digit' })
-
-      const history = historyRef.current
-      history.push({ time: t, count })
-      if (history.length > MAX_HISTORY) history.shift()
-      saveJSON('analyticsHistory', history)
-
-      // Simulate vehicle type breakdown from count
-      const cars  = Math.round(count * 0.45) + Math.floor(Math.random() * 3)
-      const bikes = Math.round(count * 0.25) + Math.floor(Math.random() * 2)
-      const buses = Math.round(count * 0.08) + Math.floor(Math.random() * 2)
-      const trucks = Math.round(count * 0.07) + Math.floor(Math.random() * 1)
-      const auto  = Math.max(0, count - cars - bikes - buses - trucks)
-
-      const ta = typeAccumRef.current
-      ta.Cars  += cars
-      ta.Bikes += bikes
-      ta.Buses += buses
-      ta.Trucks += trucks
-      ta.Auto  += auto
-      saveJSON('analyticsTypeAccum', ta)
-
-      // KPIs
-      const total = history.reduce((s, h) => s + h.count, 0)
-      const peak  = Math.max(...history.map(h => h.count))
-      setKpis({
-        total,
-        avgPerCycle: history.length ? Math.round(total / history.length) : 0,
-        peakCount: peak,
-        cycles: history.length,
-      })
-
-      // Flow line chart
-      const flowDisplay = history.slice(-MAX_HISTORY)
-      setFlowData({
-        labels: flowDisplay.map(h => h.time),
-        datasets: [{
-          label: 'Vehicles',
-          data: flowDisplay.map(h => h.count),
-          borderColor: C.white,
-          backgroundColor: C.white5,
-          tension: 0.4,
-          fill: true,
-          pointRadius: 0,
-          borderWidth: 1.5,
-        }],
-      })
-
-      // Histogram — last 12 cycle counts
-      const last12 = flowDisplay.slice(-12)
-      setHistData({
-        labels: last12.map(h => h.time),
-        datasets: [{
-          label: 'Vehicles per Cycle',
-          data: last12.map(h => h.count),
-          backgroundColor: last12.map(h =>
-            h.count >= 15 ? C.red : h.count >= 5 ? C.yellow : C.green
-          ),
-          borderColor: 'transparent',
-          borderRadius: 3,
-          barThickness: 18,
-        }],
-      })
-
-      // Pie — vehicle type distribution (cumulative)
-      setPieData({
-        labels: ['Cars', 'Bikes', 'Buses', 'Trucks', 'Auto-rickshaw'],
-        datasets: [{
-          data: [ta.Cars, ta.Bikes, ta.Buses, ta.Trucks, ta.Auto],
-          backgroundColor: [C.white, C.white2, C.white3, C.white4, C.white5],
-          borderColor: '#141414',
-          borderWidth: 2,
-          hoverOffset: 6,
-        }],
-      })
-
-      // Frequency distribution bar — current cycle breakdown
-      setFreqData({
-        labels: ['Cars', 'Bikes', 'Buses', 'Trucks', 'Auto'],
-        datasets: [{
-          label: 'Current Cycle',
-          data: [cars, bikes, buses, trucks, auto],
-          backgroundColor: [C.white, C.white2, C.white3, C.white4, C.white5],
-          borderColor: 'transparent',
-          borderRadius: 3,
-          barThickness: 28,
-        }],
-      })
-    } catch (_) { /* network error — silently retry next cycle */ }
+      
+      // Update simulation metrics
+      if (simData) {
+        setSimulationMetrics(simData)
+        
+        // Update simulation event logs if available
+        if (simData.event_log && simData.event_log.length > 0) {
+          setSimulationLogs(prev => {
+            const existingSteps = new Set(prev.map(log => `${log.step}-${log.timestamp}-${log.message}`))
+            const newEvents = simData.event_log.filter(event => 
+              !existingSteps.has(`${event.step}-${event.timestamp}-${event.message}`)
+            )
+            
+            const updated = [...prev, ...newEvents]
+            const trimmed = updated.slice(-200)
+            saveJSON('simulationLogs', trimmed)
+            return trimmed
+          })
+        }
+        
+        // Create performance log entry
+        const logEntry = {
+          timestamp: t,
+          step: simData.simulation_state?.step || 0,
+          systemPerformance: (simData.performance_metrics?.avg_system_performance * 100 || 0).toFixed(1),
+          commEfficiency: (simData.performance_metrics?.communication_efficiency || 0).toFixed(2),
+          globalReward: (simData.performance_metrics?.global_reward_avg * 100 || 0).toFixed(1),
+          activeAgents: simData.simulation_state?.total_agents || 0,
+          commEvents: simData.simulation_state?.communication_events || 0
+        }
+        
+        setPerformanceLogs(prev => {
+          const updated = [...prev, logEntry]
+          if (updated.length > 100) updated.shift()
+          saveJSON('performanceLogs', updated)
+          return updated
+        })
+      }
+    } catch (_) { /* network error */ }
   }, [])
 
   // ─── Lifecycle: poll + visibility ───
   useEffect(() => {
     const handleVisibility = () => {
       isVisibleRef.current = !document.hidden
-      // Immediately poll when tab becomes visible again to refresh stale data
       if (!document.hidden) poll()
     }
     document.addEventListener('visibilitychange', handleVisibility)
@@ -203,193 +92,324 @@ function Analytics() {
     }
   }, [poll])
 
-  /* ── Memoized chart options (static — never change) ── */
-  const lineOpts = useMemo(() => ({
-    responsive: true, maintainAspectRatio: false,
-    animation: { duration: 300 },
-    plugins: { legend: { display: false }, tooltip: tooltipStyle },
-    scales: {
-      y: { beginAtZero: true, grid: { color: gridColor, drawBorder: false }, border: { display: false }, ticks: { color: '#8e9192', font: tickFont, padding: 4 } },
-      x: { grid: { display: false }, border: { display: false }, ticks: { color: '#8e9192', font: tickFont, maxTicksLimit: 6, maxRotation: 0 } },
-    },
-  }), [])
-
-  const barOpts = useMemo(() => ({
-    responsive: true, maintainAspectRatio: false,
-    animation: { duration: 300 },
-    plugins: { legend: { display: false }, tooltip: { ...tooltipStyle, displayColors: false } },
-    scales: {
-      y: { beginAtZero: true, grid: { color: gridColor, drawBorder: false }, border: { display: false }, ticks: { color: '#8e9192', font: tickFont, padding: 4 } },
-      x: { grid: { display: false }, border: { display: false }, ticks: { color: '#8e9192', font: { size: 8, family: 'JetBrains Mono' }, maxRotation: 45, minRotation: 45 } },
-    },
-  }), [])
-
-  const freqBarOpts = useMemo(() => ({
-    responsive: true, maintainAspectRatio: false,
-    indexAxis: 'y',
-    animation: { duration: 300 },
-    plugins: { legend: { display: false }, tooltip: { ...tooltipStyle, displayColors: false } },
-    scales: {
-      x: { beginAtZero: true, grid: { color: gridColor, drawBorder: false }, border: { display: false }, ticks: { color: '#8e9192', font: tickFont } },
-      y: { grid: { display: false }, border: { display: false }, ticks: { color: '#c4c7c8', font: { size: 11, family: 'JetBrains Mono', weight: '500' } } },
-    },
-  }), [])
-
-  const pieOpts = useMemo(() => ({
-    responsive: true, maintainAspectRatio: false,
-    animation: { duration: 300 },
-    plugins: {
-      legend: { display: false },
-      tooltip: { ...tooltipStyle, displayColors: true },
-    },
-    cutout: '55%',
-  }), [])
-
-  // Memoized cumulative bar data derived from pieData
-  const cumulativeBarData = useMemo(() => ({
-    labels: typeLabels,
-    datasets: [{
-      label: 'Total',
-      data: pieData.datasets?.[0]?.data || [0, 0, 0, 0, 0],
-      backgroundColor: typeColors,
-      borderColor: 'transparent',
-      borderRadius: 3,
-      barThickness: 36,
-    }],
-  }), [pieData])
-
-  const cumulativeBarOpts = useMemo(() => ({
-    ...barOpts,
-    scales: {
-      ...barOpts.scales,
-      x: { ...barOpts.scales.x, ticks: { ...barOpts.scales.x.ticks, maxRotation: 0, minRotation: 0, font: { size: 11, family: 'JetBrains Mono' } } },
-    },
-  }), [barOpts])
-
   return (
     <>
       {/* Header */}
       <div className="analytics-header">
         <div>
-          <h2 className="analytics-title">Analytics</h2>
-          <p className="analytics-subtitle">Historical traffic data analysis · Kothrud, Pune</p>
+          <h2 className="analytics-title">D-LOGIC Analytics</h2>
+          <p className="analytics-subtitle">System Performance & Algorithm Metrics</p>
         </div>
       </div>
 
-      {/* KPI summary row */}
-      <div className="an-kpi-row">
-        <div className="data-card an-kpi">
-          <span className="an-kpi-label">Total Vehicles</span>
-          <span className="an-kpi-value">{kpis.total.toLocaleString()}</span>
-          <span className="an-kpi-meta">Cumulative count</span>
-        </div>
-        <div className="data-card an-kpi">
-          <span className="an-kpi-label">Avg / Cycle</span>
-          <span className="an-kpi-value">{kpis.avgPerCycle}</span>
-          <span className="an-kpi-meta">Per 5s interval</span>
-        </div>
-        <div className="data-card an-kpi">
-          <span className="an-kpi-label">Peak Count</span>
-          <span className="an-kpi-value">{kpis.peakCount}</span>
-          <span className="an-kpi-meta up">Highest recorded</span>
-        </div>
-        <div className="data-card an-kpi">
-          <span className="an-kpi-label">Data Points</span>
-          <span className="an-kpi-value">{kpis.cycles}</span>
-          <span className="an-kpi-meta">Cycles captured</span>
-        </div>
-      </div>
-
-      {/* Flow patterns — full width line chart */}
-      <div className="an-grid-full">
-        <div className="data-card an-panel">
-          <div className="an-panel-header">
-            <span className="an-panel-title">
-              <span className="material-symbols-outlined">show_chart</span>
-              Flow Patterns (Live)
-            </span>
-            <span className="an-panel-meta">Last 30 readings</span>
-          </div>
-          <div className="an-chart-area-lg">
-            <Line data={flowData} options={lineOpts} />
-          </div>
-        </div>
-      </div>
-
-      {/* 2-col: Histogram + Frequency */}
-      <div className="an-grid">
-        {/* Histogram */}
-        <div className="data-card an-panel">
-          <div className="an-panel-header">
-            <span className="an-panel-title">
-              <span className="material-symbols-outlined">bar_chart</span>
-              Vehicle Count Histogram
-            </span>
-            <span className="an-panel-meta">Last 12 cycles</span>
-          </div>
-          <div className="an-chart-area">
-            <Bar data={histData} options={barOpts} />
-          </div>
-          <div className="an-legend">
-            <div className="an-legend-item"><span className="an-legend-dot" style={{ background: C.green }} /> Low (&lt;5)</div>
-            <div className="an-legend-item"><span className="an-legend-dot" style={{ background: C.yellow }} /> Moderate (5-14)</div>
-            <div className="an-legend-item"><span className="an-legend-dot" style={{ background: C.red }} /> High (≥15)</div>
-          </div>
-        </div>
-
-        {/* Frequency distribution — horizontal bar */}
-        <div className="data-card an-panel">
-          <div className="an-panel-header">
-            <span className="an-panel-title">
-              <span className="material-symbols-outlined">align_horizontal_left</span>
-              Frequency Distribution
-            </span>
-            <span className="an-panel-meta">Current cycle</span>
-          </div>
-          <div className="an-chart-area">
-            <Bar data={freqData} options={freqBarOpts} />
-          </div>
-        </div>
-      </div>
-
-      {/* 2-col: Pie chart + type breakdown table */}
-      <div className="an-grid">
-        {/* Doughnut — vehicle type share */}
-        <div className="data-card an-panel">
-          <div className="an-panel-header">
-            <span className="an-panel-title">
-              <span className="material-symbols-outlined">donut_large</span>
-              Vehicle Type Share
-            </span>
-            <span className="an-panel-meta">Cumulative</span>
-          </div>
-          <div className="an-chart-area-pie">
-            <Doughnut data={pieData} options={pieOpts} />
-          </div>
-          <div className="an-legend">
-            {typeLabels.map((lbl, i) => (
-              <div key={lbl} className="an-legend-item">
-                <span className="an-legend-dot" style={{ background: typeColors[i] }} />
-                {lbl}
+      {/* D-LOGIC Performance Metrics */}
+      {simulationMetrics ? (
+        <>
+          <div className="an-grid-full">
+            <div className="data-card an-panel">
+              <div className="an-panel-header">
+                <span className="an-panel-title">
+                  <span className="material-symbols-outlined">speed</span>
+                  D-LOGIC System Performance Metrics
+                </span>
+                <span className="an-panel-meta">Multi-Agent Simulation</span>
               </div>
-            ))}
-          </div>
-        </div>
+              <div className="an-metrics-grid">
+                <div className="an-metric-card">
+                  <div className="an-metric-icon" style={{ background: 'linear-gradient(135deg, #22c55e 0%, #16a34a 100%)' }}>
+                    <span className="material-symbols-outlined" style={{ color: '#ffffff' }}>analytics</span>
+                  </div>
+                  <div className="an-metric-content">
+                    <span className="an-metric-label">System Performance</span>
+                    <span className="an-metric-value">
+                      {(simulationMetrics.performance_metrics?.avg_system_performance * 100 || 0).toFixed(1)}%
+                    </span>
+                    <span className="an-metric-desc">Average reward across agents</span>
+                  </div>
+                </div>
 
-        {/* Another angle: per-type cumulative bar */}
-        <div className="data-card an-panel">
-          <div className="an-panel-header">
-            <span className="an-panel-title">
-              <span className="material-symbols-outlined">stacked_bar_chart</span>
-              Cumulative by Type
-            </span>
-            <span className="an-panel-meta">All cycles</span>
+                <div className="an-metric-card">
+                  <div className="an-metric-icon" style={{ background: 'linear-gradient(135deg, #22d3ee 0%, #06b6d4 100%)' }}>
+                    <span className="material-symbols-outlined" style={{ color: '#ffffff' }}>hub</span>
+                  </div>
+                  <div className="an-metric-content">
+                    <span className="an-metric-label">Communication Efficiency</span>
+                    <span className="an-metric-value">
+                      {(simulationMetrics.performance_metrics?.communication_efficiency || 0).toFixed(2)}
+                    </span>
+                    <span className="an-metric-desc">Avg neighbors per agent</span>
+                  </div>
+                </div>
+
+                <div className="an-metric-card">
+                  <div className="an-metric-icon" style={{ background: 'linear-gradient(135deg, #a78bfa 0%, #8b5cf6 100%)' }}>
+                    <span className="material-symbols-outlined" style={{ color: '#ffffff' }}>emoji_events</span>
+                  </div>
+                  <div className="an-metric-content">
+                    <span className="an-metric-label">Global Reward</span>
+                    <span className="an-metric-value">
+                      {(simulationMetrics.performance_metrics?.global_reward_avg * 100 || 0).toFixed(1)}%
+                    </span>
+                    <span className="an-metric-desc">MAPPO policy performance</span>
+                  </div>
+                </div>
+
+                <div className="an-metric-card">
+                  <div className="an-metric-icon" style={{ background: 'linear-gradient(135deg, #f59e0b 0%, #d97706 100%)' }}>
+                    <span className="material-symbols-outlined" style={{ color: '#ffffff' }}>step</span>
+                  </div>
+                  <div className="an-metric-content">
+                    <span className="an-metric-label">Simulation Steps</span>
+                    <span className="an-metric-value">
+                      {simulationMetrics.simulation_state?.step || 0}
+                    </span>
+                    <span className="an-metric-desc">Total iterations completed</span>
+                  </div>
+                </div>
+              </div>
+            </div>
           </div>
-          <div className="an-chart-area">
-            <Bar data={cumulativeBarData} options={cumulativeBarOpts} />
+
+          {/* Performance Update Logs */}
+          <div className="an-grid-full">
+            <div className="data-card an-panel">
+              <div className="an-panel-header">
+                <div style={{ display: 'flex', alignItems: 'center', gap: '12px' }}>
+                  <span className="an-panel-title">
+                    <span className="material-symbols-outlined">receipt_long</span>
+                    Performance Update Logs
+                  </span>
+                  <span className="an-log-count">{performanceLogs.length} entries</span>
+                </div>
+                <div style={{ display: 'flex', alignItems: 'center', gap: '12px' }}>
+                  <span className="an-panel-meta">Real-time system updates (last 100 entries)</span>
+                  {performanceLogs.length > 0 && (
+                    <button 
+                      className="an-clear-logs-btn"
+                      onClick={() => {
+                        setPerformanceLogs([])
+                        localStorage.removeItem('performanceLogs')
+                      }}
+                      title="Clear all logs"
+                    >
+                      <span className="material-symbols-outlined">delete_sweep</span>
+                      Clear
+                    </button>
+                  )}
+                </div>
+              </div>
+              <div className="an-logs-container">
+                <div className="an-logs-header">
+                  <span className="an-log-col-time">Timestamp</span>
+                  <span className="an-log-col-step">Step</span>
+                  <span className="an-log-col-perf">Sys Perf</span>
+                  <span className="an-log-col-comm">Comm Eff</span>
+                  <span className="an-log-col-reward">Reward</span>
+                  <span className="an-log-col-agents">Agents</span>
+                  <span className="an-log-col-events">Events</span>
+                </div>
+                <div className="an-logs-body">
+                  {performanceLogs.length === 0 ? (
+                    <div className="an-logs-empty">
+                      <span className="material-symbols-outlined">pending</span>
+                      <p>Waiting for performance data...</p>
+                    </div>
+                  ) : (
+                    performanceLogs.slice().reverse().map((log, idx) => (
+                      <div key={idx} className="an-log-row">
+                        <span className="an-log-col-time">{log.timestamp}</span>
+                        <span className="an-log-col-step">{log.step}</span>
+                        <span className="an-log-col-perf">
+                          <span className={`an-log-badge ${
+                            parseFloat(log.systemPerformance) >= 70 ? 'an-log-badge-success' :
+                            parseFloat(log.systemPerformance) >= 50 ? 'an-log-badge-warning' :
+                            'an-log-badge-error'
+                          }`}>
+                            {log.systemPerformance}%
+                          </span>
+                        </span>
+                        <span className="an-log-col-comm">{log.commEfficiency}</span>
+                        <span className="an-log-col-reward">
+                          <span className={`an-log-badge ${
+                            parseFloat(log.globalReward) >= 65 ? 'an-log-badge-success' :
+                            parseFloat(log.globalReward) >= 50 ? 'an-log-badge-warning' :
+                            'an-log-badge-error'
+                          }`}>
+                            {log.globalReward}%
+                          </span>
+                        </span>
+                        <span className="an-log-col-agents">{log.activeAgents}</span>
+                        <span className="an-log-col-events">{log.commEvents}</span>
+                      </div>
+                    ))
+                  )}
+                </div>
+              </div>
+            </div>
           </div>
+
+          {/* Simulation Event Logs */}
+          <div className="an-grid-full">
+            <div className="data-card an-panel">
+              <div className="an-panel-header">
+                <div style={{ display: 'flex', alignItems: 'center', gap: '12px' }}>
+                  <span className="an-panel-title">
+                    <span className="material-symbols-outlined">article</span>
+                    Simulation Event Logs
+                  </span>
+                  <span className="an-log-count">{simulationLogs.length} events</span>
+                </div>
+                <div style={{ display: 'flex', alignItems: 'center', gap: '12px' }}>
+                  <span className="an-panel-meta">Live agent activities, P2P comms, alerts (last 200 events)</span>
+                  {simulationLogs.length > 0 && (
+                    <button 
+                      className="an-clear-logs-btn"
+                      onClick={() => {
+                        setSimulationLogs([])
+                        localStorage.removeItem('simulationLogs')
+                      }}
+                      title="Clear all simulation logs"
+                    >
+                      <span className="material-symbols-outlined">delete_sweep</span>
+                      Clear
+                    </button>
+                  )}
+                </div>
+              </div>
+              <div className="an-sim-logs-container">
+                <div className="an-sim-logs-body">
+                  {simulationLogs.length === 0 ? (
+                    <div className="an-logs-empty">
+                      <span className="material-symbols-outlined">pending</span>
+                      <p>Waiting for simulation events...</p>
+                      <p style={{ fontSize: '11px', marginTop: '-8px' }}>Events will appear as the simulation runs</p>
+                    </div>
+                  ) : (
+                    simulationLogs.slice().reverse().map((log, idx) => (
+                      <div key={idx} className={`an-sim-log-entry an-sim-log-${log.type}`}>
+                        <div className="an-sim-log-header">
+                          <span className="an-sim-log-time">{log.timestamp}</span>
+                          <span className="an-sim-log-step">Step {log.step}</span>
+                          <span className={`an-sim-log-type-badge an-sim-log-type-${log.type}`}>
+                            {log.type === 'communication' && '📡'}
+                            {log.type === 'alert' && '⚠️'}
+                            {log.type === 'success' && '✓'}
+                            {log.type === 'warning' && '⚡'}
+                            {log.type === 'error' && '❌'}
+                            {log.type === 'info' && 'ℹ️'}
+                            {' '}{log.type.toUpperCase()}
+                          </span>
+                        </div>
+                        <div className="an-sim-log-content">
+                          <span className="an-sim-log-source">[{log.source}]</span>
+                          <span className="an-sim-log-message">{log.message}</span>
+                          {log.target_id && (
+                            <span className="an-sim-log-target">→ {log.target_id}</span>
+                          )}
+                        </div>
+                      </div>
+                    ))
+                  )}
+                </div>
+              </div>
+            </div>
+          </div>
+
+          {/* Algorithm Information */}
+          <div className="an-grid">
+            <div className="data-card an-panel">
+              <div className="an-panel-header">
+                <span className="an-panel-title">
+                  <span className="material-symbols-outlined">account_tree</span>
+                  Algorithm 1: KD-Tree Spatial Search
+                </span>
+                <span className="an-panel-meta">Neighbor Discovery</span>
+              </div>
+              <div className="an-algorithm-info">
+                <p className="an-algo-desc">
+                  Efficiently identifies nearby AI agents within a 100m communication radius using KD-Tree spatial indexing for O(log n) neighbor queries.
+                </p>
+                <div className="an-algo-stats">
+                  <div className="an-algo-stat">
+                    <span className="an-algo-stat-label">Complexity</span>
+                    <span className="an-algo-stat-value">O(log n + k)</span>
+                  </div>
+                  <div className="an-algo-stat">
+                    <span className="an-algo-stat-label">Radius</span>
+                    <span className="an-algo-stat-value">100m</span>
+                  </div>
+                  <div className="an-algo-stat">
+                    <span className="an-algo-stat-label">Update Rate</span>
+                    <span className="an-algo-stat-value">2 Hz</span>
+                  </div>
+                </div>
+                <div className="an-algo-features">
+                  <div className="an-algo-feature">
+                    <span className="material-symbols-outlined">check_circle</span>
+                    <span>Spatial indexing for fast neighbor discovery</span>
+                  </div>
+                  <div className="an-algo-feature">
+                    <span className="material-symbols-outlined">check_circle</span>
+                    <span>Local density & congestion computation</span>
+                  </div>
+                  <div className="an-algo-feature">
+                    <span className="material-symbols-outlined">check_circle</span>
+                    <span>Dynamic neighborhood updates</span>
+                  </div>
+                </div>
+              </div>
+            </div>
+
+            <div className="data-card an-panel">
+              <div className="an-panel-header">
+                <span className="an-panel-title">
+                  <span className="material-symbols-outlined">device_hub</span>
+                  Algorithm 2: GNN-MAPPO Routing
+                </span>
+                <span className="an-panel-meta">Decentralized Decision-Making</span>
+              </div>
+              <div className="an-algorithm-info">
+                <p className="an-algo-desc">
+                  Graph Neural Network coupled with Multi-Agent PPO for decentralized routing decisions based on local observations and traffic conditions.
+                </p>
+                <div className="an-algo-stats">
+                  <div className="an-algo-stat">
+                    <span className="an-algo-stat-label">Policy</span>
+                    <span className="an-algo-stat-value">MAPPO</span>
+                  </div>
+                  <div className="an-algo-stat">
+                    <span className="an-algo-stat-label">Graph Type</span>
+                    <span className="an-algo-stat-value">Local GNN</span>
+                  </div>
+                  <div className="an-algo-stat">
+                    <span className="an-algo-stat-label">Actions</span>
+                    <span className="an-algo-stat-value">3 types</span>
+                  </div>
+                </div>
+                <div className="an-algo-features">
+                  <div className="an-algo-feature">
+                    <span className="material-symbols-outlined">check_circle</span>
+                    <span>Local graph construction from observations</span>
+                  </div>
+                  <div className="an-algo-feature">
+                    <span className="material-symbols-outlined">check_circle</span>
+                    <span>Adaptive exploration rate (0.05-0.3)</span>
+                  </div>
+                  <div className="an-algo-feature">
+                    <span className="material-symbols-outlined">check_circle</span>
+                    <span>Reward-based policy updates</span>
+                  </div>
+                </div>
+              </div>
+            </div>
+          </div>
+        </>
+      ) : (
+        <div className="loading-screen">
+          <div className="loading-spinner"></div>
+          <p>Loading D-LOGIC Analytics...</p>
         </div>
-      </div>
+      )}
     </>
   )
 }

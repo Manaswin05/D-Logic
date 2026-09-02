@@ -21,7 +21,7 @@ function Sidebar() {
     <nav className="icon-sidebar">
       <div className="sb-brand">
         <span className="material-symbols-outlined" style={{ fontVariationSettings: "'FILL' 1" }}>
-          traffic
+          hub
         </span>
       </div>
 
