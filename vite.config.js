@@ -7,11 +7,14 @@ export default defineConfig({
     port: 3000,
     // Proxy API calls to Flask backend during local development
     proxy: {
+      '/simulation_data': 'http://localhost:5000',
+      '/simulation_control': 'http://localhost:5000',
+      '/agent_details': 'http://localhost:5000',
+      '/add_agent': 'http://localhost:5000',
+      '/remove_agent': 'http://localhost:5000',
       '/video_feed': 'http://localhost:5000',
       '/traffic_status': 'http://localhost:5000',
-      '/set_video_source': 'http://localhost:5000',
-      '/model_info': 'http://localhost:5000',
-      '/train_model': 'http://localhost:5000'
+      '/algorithms_info': 'http://localhost:5000'
     }
   },
   build: {

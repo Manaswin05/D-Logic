@@ -1,6 +1,6 @@
 services:
   - type: web
-    name: ai-traffic-moderator
+    name: d-logic
     env: python
     region: oregon
     plan: free
@@ -13,5 +13,3 @@ services:
         value: 3.11.0
       - key: NODE_VERSION
         value: 18.17.0
-      - key: VIDEO_SOURCE
-        value: demo_traffic.mp4

@@ -18,19 +18,12 @@ RUN pip install --no-cache-dir -r requirements.txt
 
 # Copy application code
 COPY app.py ./
-COPY models/ ./models/
 
 # Copy pre-built React frontend (already built locally)
 COPY dist/ ./dist/
 
-# Copy demo video if present (glob with * makes it optional - no error if missing)
-COPY demo_traffic.mp4* /app/
-
 # Hugging Face Spaces requires port 7860
 ENV PORT=7860
-
-# Tell the app where to find the demo video
-ENV VIDEO_SOURCE=/app/demo_traffic.mp4
 
 # Expose the port HF Spaces expects
 EXPOSE 7860
