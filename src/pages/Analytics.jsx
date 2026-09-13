@@ -32,6 +32,7 @@ function Analytics() {
 
     try {
       const simulationResponse = await axios.get('/simulation_data')
+      // If we reach here, the response is successful
       const simData = simulationResponse.data
       
       const t = new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit', second: '2-digit' })
@@ -73,21 +74,42 @@ function Analytics() {
           return updated
         })
       }
-    } catch (_) { /* network error */ }
+    } catch (e) { 
+      // network error, let the caller know it failed
+      throw e;
+    }
   }, [])
 
   // ─── Lifecycle: poll + visibility ───
   useEffect(() => {
+    let timeoutId;
+    let isMounted = true;
+    let hasData = false;
+
     const handleVisibility = () => {
       isVisibleRef.current = !document.hidden
-      if (!document.hidden) poll()
+      if (!document.hidden) pollWithRetry()
     }
-    document.addEventListener('visibilitychange', handleVisibility)
 
-    poll()
-    const id = setInterval(poll, POLL_INTERVAL_MS)
+    const pollWithRetry = async () => {
+      if (!isMounted) return;
+      
+      try {
+        await poll();
+        hasData = true;
+        timeoutId = setTimeout(pollWithRetry, POLL_INTERVAL_MS);
+      } catch (e) {
+        // If poll failed (backend not ready) and we have no data, retry quickly
+        timeoutId = setTimeout(pollWithRetry, hasData ? POLL_INTERVAL_MS : 500);
+      }
+    };
+
+    document.addEventListener('visibilitychange', handleVisibility)
+    pollWithRetry()
+
     return () => {
-      clearInterval(id)
+      isMounted = false;
+      clearTimeout(timeoutId)
       document.removeEventListener('visibilitychange', handleVisibility)
     }
   }, [poll])

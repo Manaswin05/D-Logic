@@ -12,18 +12,32 @@ function Dashboard() {
   ])
 
   useEffect(() => {
+    let timeoutId;
+    let isMounted = true;
+    let hasData = false;
+
     const fetchSimulationData = async () => {
       try {
         const response = await axios.get('/simulation_data')
-        setSimulationData(response.data)
+        if (isMounted) {
+          setSimulationData(response.data)
+          hasData = true;
+          timeoutId = setTimeout(fetchSimulationData, 1000)
+        }
       } catch (error) {
         console.error('Error fetching simulation data:', error)
+        if (isMounted) {
+          // Retry quickly if we are still waiting for initial load
+          timeoutId = setTimeout(fetchSimulationData, hasData ? 1000 : 250)
+        }
       }
     }
 
     fetchSimulationData()
-    const interval = setInterval(fetchSimulationData, 1000)
-    return () => clearInterval(interval)
+    return () => {
+      isMounted = false;
+      clearTimeout(timeoutId)
+    }
   }, [])
 
   useEffect(() => {

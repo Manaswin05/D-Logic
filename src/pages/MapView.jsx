@@ -104,18 +104,32 @@ function MapView() {
   }
 
   useEffect(() => {
+    let timeoutId;
+    let isMounted = true;
+    let hasData = false;
+
     const fetchSimulationData = async () => {
       try {
         const response = await axios.get('/simulation_data')
-        setSimulationData(response.data)
+        if (isMounted) {
+          setSimulationData(response.data)
+          hasData = true;
+          timeoutId = setTimeout(fetchSimulationData, 2500)
+        }
       } catch (error) {
         console.error('Error fetching simulation data:', error)
+        if (isMounted) {
+          // If we haven't loaded data yet (backend still starting), retry quickly
+          timeoutId = setTimeout(fetchSimulationData, hasData ? 2500 : 250)
+        }
       }
     }
 
     fetchSimulationData()
-    const interval = setInterval(fetchSimulationData, 2500)
-    return () => clearInterval(interval)
+    return () => {
+      isMounted = false;
+      clearTimeout(timeoutId)
+    }
   }, [])
 
   const getStatusColor = (status) => {
@@ -157,6 +171,36 @@ function MapView() {
           <p className="map-subtitle">Multi-Agent System Overlay · Pune City</p>
         </div>
         <div className="map-stats">
+          <button 
+            onClick={async () => {
+              try {
+                await axios.post('/add_agent', {})
+              } catch (err) {
+                console.error('Failed to add agent:', err)
+              }
+            }}
+            style={{
+              background: 'linear-gradient(135deg, #10b981, #059669)',
+              border: 'none',
+              color: '#fff',
+              padding: '8px 16px',
+              borderRadius: '8px',
+              cursor: 'pointer',
+              fontFamily: 'Geist, sans-serif',
+              fontSize: '12px',
+              fontWeight: '600',
+              letterSpacing: '0.5px',
+              display: 'flex',
+              alignItems: 'center',
+              gap: '6px',
+              marginRight: '12px',
+              transition: 'all 0.2s',
+              boxShadow: '0 2px 8px rgba(16, 185, 129, 0.3)'
+            }}
+          >
+            <span className="material-symbols-outlined" style={{ fontSize: '16px' }}>add_circle</span>
+            Add Agent
+          </button>
           <button 
             onClick={async () => {
               try {

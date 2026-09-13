@@ -380,7 +380,7 @@ class DLOGICSimulation:
         tasks = ['delivery', 'patrol', 'rescue', 'transport', 'monitor']
         statuses = ['moving', 'idle', 'executing']
         
-        for i in range(1, 21):
+        for i in range(1, 5):
             agent_id = f'AGENT_{i:03d}'
             
             # Generate agents in a similar organic shape as the road network
@@ -725,7 +725,9 @@ def run_simulation():
         with simulation_lock:
             if dlogic_sim.simulation_state['running']:
                 dlogic_sim.simulation_step()
-        time.sleep(1.0)  # 1 step per second (reduced CPU usage for free tier)
+        
+        # Ensure sleep is outside the lock so API requests don't block
+        time.sleep(1.0)
 
 # Start simulation thread
 simulation_thread = threading.Thread(target=run_simulation, daemon=True)
