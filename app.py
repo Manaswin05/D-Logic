@@ -1,8 +1,6 @@
 from flask import Flask, render_template, Response, jsonify, send_from_directory, request
 from flask_cors import CORS
-import cv2
 import time
-import numpy as np
 import os
 import json
 import random
@@ -11,7 +9,6 @@ import threading
 from collections import deque, defaultdict
 from dataclasses import dataclass, asdict
 from typing import List, Dict, Tuple, Optional
-from scipy.spatial import KDTree
 import networkx as nx
 
 # Serve React build in production
@@ -51,64 +48,41 @@ class TrafficState:
     connected_roads: List[str]
 
 class KDTreeSpatialSearch:
-    """Algorithm 1: KD-Tree Spatial Range Search for Agent Neighbor Discovery"""
+    """Algorithm 1: Spatial Range Search for Agent Neighbor Discovery"""
     
     def __init__(self):
         self.agents = {}  # id -> Agent
-        self.kd_tree = None
-        self.agent_positions = []
-        self.agent_ids = []
         self.communication_radius = 100.0  # meters
         
     def add_agent(self, agent: Agent):
         """Add agent to the spatial index"""
         self.agents[agent.id] = agent
-        self.rebuild_spatial_index()
         
     def remove_agent(self, agent_id: str):
         """Remove agent from the spatial index"""
         if agent_id in self.agents:
             del self.agents[agent_id]
-            self.rebuild_spatial_index()
     
     def rebuild_spatial_index(self):
-        """Rebuild KD-Tree spatial index"""
-        if not self.agents:
-            self.kd_tree = None
-            return
-            
-        positions = []
-        ids = []
-        
-        for agent_id, agent in self.agents.items():
-            positions.append(agent.position)
-            ids.append(agent_id)
-            
-        self.agent_positions = np.array(positions)
-        self.agent_ids = ids
-        
-        if len(positions) > 0:
-            self.kd_tree = KDTree(self.agent_positions)
+        """No-op: neighbor search is done on-the-fly to save memory"""
+        pass
     
     def find_neighbors(self, agent_id: str) -> List[str]:
-        """Find neighboring agents within communication radius"""
-        if not self.kd_tree or agent_id not in self.agents:
+        """Find neighboring agents within communication radius using simple distance check"""
+        if agent_id not in self.agents:
             return []
             
         agent = self.agents[agent_id]
-        
-        # Query KD-Tree for neighbors within communication radius
-        neighbor_indices = self.kd_tree.query_ball_point(
-            agent.position, 
-            self.communication_radius
-        )
-        
-        # Convert indices to agent IDs, excluding self
+        r2 = self.communication_radius ** 2
         neighbors = []
-        for idx in neighbor_indices:
-            neighbor_id = self.agent_ids[idx]
-            if neighbor_id != agent_id:
-                neighbors.append(neighbor_id)
+        
+        for other_id, other in self.agents.items():
+            if other_id == agent_id:
+                continue
+            dx = agent.position[0] - other.position[0]
+            dy = agent.position[1] - other.position[1]
+            if dx*dx + dy*dy <= r2:
+                neighbors.append(other_id)
                 
         return neighbors
     
@@ -170,25 +144,18 @@ class GNNMAPPORouter:
     def initialize_road_network(self):
         """Initialize road network topology"""
         import random
-        from scipy.spatial import Delaunay
-        
         import math
         
-        # Create a more realistic distributed network for simulation
+        # Create a distributed network for simulation
         random.seed(1337)  # Consistent layout
-        num_intersections = 30
+        num_intersections = 7
         intersections = []
         points = []
         
         for i in range(num_intersections):
-            # Generate points in an organic blob shape instead of a perfect square
-            # using random radius and angle
             angle = random.uniform(0, 2 * math.pi)
-            # Use beta distribution or square root to avoid clumping at center
             r = math.sqrt(random.uniform(0.1, 1.0)) * 250
-            
             x = 300 + r * math.cos(angle)
-            # Add some slight stretching to make it non-circular
             y = 300 + (r * 0.8) * math.sin(angle)
             
             intersection_id = f'N{i}'
@@ -198,8 +165,6 @@ class GNNMAPPORouter:
         # Add intersection nodes
         for intersection_id, pos in intersections:
             self.road_network.add_node(intersection_id, pos=pos)
-            
-            # Initialize traffic state
             self.traffic_states[intersection_id] = TrafficState(
                 intersection_id=intersection_id,
                 position=pos,
@@ -210,15 +175,24 @@ class GNNMAPPORouter:
                 connected_roads=[]
             )
             
-        # Generate road connections (edges) using Delaunay triangulation for realistic layout
-        tri = Delaunay(points)
-        edges = set()
-        for simplex in tri.simplices:
-            edges.add(tuple(sorted([simplex[0], simplex[1]])))
-            edges.add(tuple(sorted([simplex[1], simplex[2]])))
-            edges.add(tuple(sorted([simplex[2], simplex[0]])))
+        # Generate road connections using nearest-neighbor edges (no scipy needed)
+        connections = []
+        for i in range(len(points)):
+            # Connect each node to its 2-3 nearest neighbors
+            dists = []
+            for j in range(len(points)):
+                if i == j:
+                    continue
+                d = math.sqrt((points[i][0]-points[j][0])**2 + (points[i][1]-points[j][1])**2)
+                dists.append((d, j))
+            dists.sort()
+            for _, j in dists[:3]:
+                edge = tuple(sorted([i, j]))
+                conn = (f'N{edge[0]}', f'N{edge[1]}')
+                if conn not in connections:
+                    connections.append(conn)
             
-        connections = [(f'N{u}', f'N{v}') for u, v in edges]
+
         
         for start, end in connections:
             distance = math.sqrt(
@@ -325,11 +299,12 @@ class GNNMAPPORouter:
         }
         
         # Analyze local graph for decision making
-        node_features = np.array(local_graph.get('node_features', []))
+        node_features = local_graph.get('node_features', [])
         
         if len(node_features) > 1:
             # Calculate average congestion in neighborhood
-            avg_congestion = np.mean(node_features[:, 0]) if node_features.shape[1] > 0 else 0
+            first_features = [f[0] for f in node_features if len(f) > 0]
+            avg_congestion = sum(first_features) / len(first_features) if first_features else 0
             
             # Decision logic based on congestion
             if avg_congestion > 0.7:  # High congestion
@@ -400,7 +375,7 @@ class DLOGICSimulation:
             'system_performance': 0.0,
             'communication_events': 0
         }
-        self.event_log = deque(maxlen=200)  # Store last 200 events
+        self.event_log = deque(maxlen=50)  # Store last 50 events (reduced for memory)
         
         # Initialize systems
         self.mappo_router.initialize_road_network()
@@ -528,6 +503,24 @@ class DLOGICSimulation:
             # Check for low battery deterministically (triggers exactly when crossing 20%)
             if agent.battery < 20 and (agent.battery + 0.1) >= 20:
                 self.log_event(agent_id, f'⚠️ Battery Critical: {agent.battery:.1f}% - Initiating RTB (Return to Base)', 'warning', agent_id)
+        
+        # Check for agents that reached a warehouse (intersection) and remove them
+        agents_to_remove = []
+        for agent_id, agent in self.spatial_search.agents.items():
+            for intersection_id, state in self.mappo_router.traffic_states.items():
+                dist = math.sqrt(
+                    (agent.position[0] - state.position[0]) ** 2 +
+                    (agent.position[1] - state.position[1]) ** 2
+                )
+                if dist < 15:  # Within 15 units of a warehouse
+                    agents_to_remove.append(agent_id)
+                    self.log_event(agent_id, f'📦 {agent_id} arrived at warehouse {intersection_id}. Task "{agent.task}" complete. Agent deallocated.', 'success', agent_id)
+                    break
+        
+        for agent_id in agents_to_remove:
+            self.spatial_search.remove_agent(agent_id)
+        
+        self.simulation_state['total_agents'] = len(self.spatial_search.agents)
         
         # Update simulation metrics
         if decisions_made > 0:
@@ -725,135 +718,22 @@ def run_simulation():
         with simulation_lock:
             if dlogic_sim.simulation_state['running']:
                 dlogic_sim.simulation_step()
-        time.sleep(0.5)  # 2 steps per second
+        time.sleep(1.0)  # 1 step per second (reduced CPU usage for free tier)
 
 # Start simulation thread
 simulation_thread = threading.Thread(target=run_simulation, daemon=True)
 simulation_thread.start()
 
-# ---------------------------
-# Visualization Frame Generation
-# ---------------------------
-def generate_simulation_frame():
-    """Generate visualization frame for the D-LOGIC simulation"""
-    frame = np.zeros((600, 600, 3), dtype=np.uint8)
-    
-    # Draw background grid
-    for i in range(0, 600, 50):
-        cv2.line(frame, (i, 0), (i, 600), (30, 30, 30), 1)
-        cv2.line(frame, (0, i), (600, i), (30, 30, 30), 1)
-    
-    # Draw road network
-    for edge in dlogic_sim.mappo_router.road_network.edges():
-        start_pos = dlogic_sim.mappo_router.road_network.nodes[edge[0]]['pos']
-        end_pos = dlogic_sim.mappo_router.road_network.nodes[edge[1]]['pos']
-        cv2.line(frame, 
-                (int(start_pos[0]), int(start_pos[1])), 
-                (int(end_pos[0]), int(end_pos[1])), 
-                (100, 100, 100), 3)
-    
-    # Draw traffic intersections
-    for intersection_id, state in dlogic_sim.mappo_router.traffic_states.items():
-        x, y = int(state.position[0]), int(state.position[1])
-        
-        # Color based on signal
-        if state.signal == 'green':
-            color = (0, 255, 0)
-        elif state.signal == 'yellow':
-            color = (0, 255, 255)
-        else:  # red
-            color = (0, 0, 255)
-        
-        cv2.circle(frame, (x, y), 15, color, -1)
-        cv2.putText(frame, intersection_id, (x-10, y-20), 
-                   cv2.FONT_HERSHEY_SIMPLEX, 0.4, (255, 255, 255), 1)
-        cv2.putText(frame, f"V:{state.vehicle_count}", (x-15, y+30), 
-                   cv2.FONT_HERSHEY_SIMPLEX, 0.3, (200, 200, 200), 1)
-    
-    # Draw agents
-    for agent in dlogic_sim.spatial_search.agents.values():
-        x, y = int(agent.position[0]), int(agent.position[1])
-        
-        # Color based on status
-        if agent.status == 'moving':
-            color = (255, 100, 0)  # Orange
-        elif agent.status == 'executing':
-            color = (255, 0, 255)  # Magenta
-        else:  # idle
-            color = (0, 100, 255)  # Blue
-        
-        # Draw agent
-        cv2.circle(frame, (x, y), 8, color, -1)
-        cv2.circle(frame, (x, y), 8, (255, 255, 255), 1)
-        
-        # Draw agent ID
-        cv2.putText(frame, agent.id.split('_')[1], (x-8, y-12), 
-                   cv2.FONT_HERSHEY_SIMPLEX, 0.3, (255, 255, 255), 1)
-        
-        # Draw communication radius (for first agent only, to avoid clutter)
-        if agent.id == 'AGENT_001':
-            cv2.circle(frame, (x, y), int(dlogic_sim.spatial_search.communication_radius), 
-                      (100, 100, 100), 1)
-        
-        # Draw neighbor connections
-        for neighbor_id in agent.neighbors:
-            if neighbor_id in dlogic_sim.spatial_search.agents:
-                neighbor = dlogic_sim.spatial_search.agents[neighbor_id]
-                neighbor_x, neighbor_y = int(neighbor.position[0]), int(neighbor.position[1])
-                cv2.line(frame, (x, y), (neighbor_x, neighbor_y), (0, 150, 150), 1)
-    
-    # Add simulation info overlay
-    info_y = 30
-    cv2.putText(frame, f"D-LOGIC Multi-Agent System", (10, info_y), 
-               cv2.FONT_HERSHEY_SIMPLEX, 0.7, (255, 255, 255), 2)
-    
-    info_y += 30
-    cv2.putText(frame, f"Step: {dlogic_sim.simulation_state['step']}", (10, info_y), 
-               cv2.FONT_HERSHEY_SIMPLEX, 0.5, (0, 255, 255), 1)
-    
-    info_y += 25
-    cv2.putText(frame, f"Agents: {dlogic_sim.simulation_state['total_agents']}", (10, info_y), 
-               cv2.FONT_HERSHEY_SIMPLEX, 0.5, (0, 255, 255), 1)
-    
-    info_y += 25
-    cv2.putText(frame, f"Performance: {dlogic_sim.simulation_state['system_performance']:.2f}", (10, info_y), 
-               cv2.FONT_HERSHEY_SIMPLEX, 0.5, (0, 255, 255), 1)
-    
-    info_y += 25
-    cv2.putText(frame, f"Comm Events: {dlogic_sim.simulation_state['communication_events']}", (10, info_y), 
-               cv2.FONT_HERSHEY_SIMPLEX, 0.5, (0, 255, 255), 1)
-    
-    # Algorithm info
-    info_y += 40
-    cv2.putText(frame, "Algorithm 1: KD-Tree Spatial Search", (10, info_y), 
-               cv2.FONT_HERSHEY_SIMPLEX, 0.4, (100, 255, 100), 1)
-    
-    info_y += 20
-    cv2.putText(frame, "Algorithm 2: GNN-MAPPO Routing", (10, info_y), 
-               cv2.FONT_HERSHEY_SIMPLEX, 0.4, (100, 255, 100), 1)
-    
-    return frame
+# Video feed removed to save ~80MB RAM (cv2 no longer imported)
+# The React frontend renders everything via the /simulation_data JSON API
 
-def process_simulation_frames():
-    """Generate frames for the simulation visualization"""
-    while True:
-        frame = generate_simulation_frame()
-        
-        # Encode frame as JPEG
-        _, buffer = cv2.imencode('.jpg', frame, [cv2.IMWRITE_JPEG_QUALITY, 85])
-        
-        yield (b'--frame\r\n'
-               b'Content-Type: image/jpeg\r\n\r\n' + buffer.tobytes() + b'\r\n')
-        
-        time.sleep(0.1)  # 10 FPS
 # ---------------------------
 # Flask Routes
 # ---------------------------
 @app.route('/video_feed')
 def video_feed():
-    """Stream simulation visualization"""
-    return Response(process_simulation_frames(),
-                    mimetype='multipart/x-mixed-replace; boundary=frame')
+    """Legacy video feed endpoint - no longer used"""
+    return jsonify({'message': 'Video feed deprecated. Use /simulation_data API instead.'})
 
 @app.route('/simulation_control', methods=['POST'])
 def simulation_control():
@@ -935,6 +815,66 @@ def remove_agent(agent_id):
             })
     
     return jsonify({'error': 'Agent not found'}), 404
+
+@app.route('/update_agent_position', methods=['POST'])
+def update_agent_position_route():
+    """Update an agent's position (for drag-drop)"""
+    data = request.json
+    agent_id = data.get('agent_id')
+    position = data.get('position')  # [x, y] in simulation co-ords
+    
+    if not agent_id or not position:
+        return jsonify({'error': 'agent_id and position required'}), 400
+    
+    with simulation_lock:
+        if agent_id in dlogic_sim.spatial_search.agents:
+            dlogic_sim.spatial_search.agents[agent_id].position = tuple(position)
+            return jsonify({'status': 'success', 'message': f'{agent_id} moved'})
+    
+    return jsonify({'error': 'Agent not found'}), 404
+
+@app.route('/update_intersection_position', methods=['POST'])
+def update_intersection_position():
+    """Update an intersection's position (for drag-drop)"""
+    data = request.json
+    intersection_id = data.get('intersection_id')
+    position = data.get('position')  # [x, y] in simulation coords
+    
+    if not intersection_id or not position:
+        return jsonify({'error': 'intersection_id and position required'}), 400
+    
+    with simulation_lock:
+        if intersection_id in dlogic_sim.mappo_router.traffic_states:
+            dlogic_sim.mappo_router.traffic_states[intersection_id].position = tuple(position)
+            if intersection_id in dlogic_sim.mappo_router.road_network.nodes:
+                dlogic_sim.mappo_router.road_network.nodes[intersection_id]['pos'] = tuple(position)
+            return jsonify({'status': 'success', 'message': f'{intersection_id} moved'})
+    
+    return jsonify({'error': 'Intersection not found'}), 404
+
+@app.route('/remove_intersection/<intersection_id>', methods=['DELETE'])
+def remove_intersection(intersection_id):
+    """Remove an intersection from the simulation"""
+    with simulation_lock:
+        if intersection_id in dlogic_sim.mappo_router.traffic_states:
+            del dlogic_sim.mappo_router.traffic_states[intersection_id]
+            if intersection_id in dlogic_sim.mappo_router.road_network.nodes:
+                dlogic_sim.mappo_router.road_network.remove_node(intersection_id)
+            return jsonify({'status': 'success', 'message': f'{intersection_id} removed'})
+    
+    return jsonify({'error': 'Intersection not found'}), 404
+
+@app.route('/reset_simulation', methods=['POST'])
+def reset_simulation():
+    """Reset simulation to default state"""
+    global dlogic_sim
+    with simulation_lock:
+        dlogic_sim = DLOGICSimulation()
+        dlogic_sim.simulation_state['running'] = True
+    return jsonify({
+        'status': 'success',
+        'message': 'Simulation reset to default state'
+    })
 
 @app.route('/traffic_status')
 def traffic_status():

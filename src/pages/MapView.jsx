@@ -1,4 +1,4 @@
-import React, { useState, useEffect } from 'react'
+import React, { useState, useEffect, useRef } from 'react'
 import { MapContainer, TileLayer, Marker, Popup, Circle, Polyline } from 'react-leaflet'
 import axios from 'axios'
 import 'leaflet/dist/leaflet.css'
@@ -13,14 +13,27 @@ L.Icon.Default.mergeOptions({
 })
 
 // Create custom icons for agents
-const createAgentIcon = (color, status) => {
+const createAgentIcon = (color, status, heading = 0) => {
+  const truckSvg = `
+    <svg width="24" height="40" viewBox="0 0 24 40" xmlns="http://www.w3.org/2000/svg" style="transform: rotate(${heading}deg); transform-origin: center; filter: drop-shadow(0px 4px 4px rgba(0,0,0,0.4));">
+      <!-- cargo -->
+      <rect x="2" y="14" width="20" height="24" rx="2" fill="#d4a373"/>
+      <rect x="4" y="16" width="16" height="20" rx="1" fill="#e6ccb2"/>
+      <!-- cab -->
+      <path d="M2,14 L22,14 L20,2 L4,2 Z" fill="#ffffff"/>
+      <path d="M4,13 L20,13 L18,4 L6,4 Z" fill="#f8fafc"/>
+      <!-- windshield -->
+      <path d="M3,12 L21,12 L19,8 L5,8 Z" fill="#1e293b"/>
+      <!-- status dot -->
+      <circle cx="12" cy="26" r="5" fill="${color}" stroke="#fff" stroke-width="2"/>
+    </svg>
+  `;
+
   return L.divIcon({
     className: 'custom-agent-marker',
-    html: `<div style="background-color: ${color}; width: 16px; height: 16px; border-radius: 50%; border: 2px solid #fff; box-shadow: 0 0 12px ${color}, inset 0 0 4px rgba(0,0,0,0.5); display: flex; align-items: center; justify-content: center;">
-             <div style="width: 4px; height: 4px; background-color: #fff; border-radius: 50%;"></div>
-           </div>`,
-    iconSize: [16, 16],
-    iconAnchor: [8, 8],
+    html: truckSvg,
+    iconSize: [24, 40],
+    iconAnchor: [12, 20],
   })
 }
 
@@ -38,12 +51,56 @@ function MapView() {
   const centerPosition = [18.5204, 73.8567] // Pune City Center
   const [simulationData, setSimulationData] = useState(null)
   const [selectedAgent, setSelectedAgent] = useState(null)
+  const agentHeadings = useRef({})
 
   const mapSimToLatLng = (x, y) => {
     // Map simulation space to cover entire Pune city (~25km x 25km area)
     const lat = 18.5204 + (y / 600) * 0.25 - 0.125
     const lng = 73.8567 + (x / 600) * 0.25 - 0.125
     return [lat, lng]
+  }
+
+  const mapLatLngToSim = (lat, lng) => {
+    // Reverse mapping: convert lat/lng back to simulation x,y
+    const y = ((lat - 18.5204 + 0.125) / 0.25) * 600
+    const x = ((lng - 73.8567 + 0.125) / 0.25) * 600
+    return [x, y]
+  }
+
+  const handleAgentDragEnd = async (agentId, e) => {
+    const { lat, lng } = e.target.getLatLng()
+    const [x, y] = mapLatLngToSim(lat, lng)
+    try {
+      await axios.post('/update_agent_position', { agent_id: agentId, position: [x, y] })
+    } catch (err) {
+      console.error('Failed to update agent position:', err)
+    }
+  }
+
+  const handleIntersectionDragEnd = async (intersectionId, e) => {
+    const { lat, lng } = e.target.getLatLng()
+    const [x, y] = mapLatLngToSim(lat, lng)
+    try {
+      await axios.post('/update_intersection_position', { intersection_id: intersectionId, position: [x, y] })
+    } catch (err) {
+      console.error('Failed to update intersection position:', err)
+    }
+  }
+
+  const handleRemoveAgent = async (agentId) => {
+    try {
+      await axios.delete(`/remove_agent/${agentId}`)
+    } catch (err) {
+      console.error('Failed to remove agent:', err)
+    }
+  }
+
+  const handleRemoveIntersection = async (intersectionId) => {
+    try {
+      await axios.delete(`/remove_intersection/${intersectionId}`)
+    } catch (err) {
+      console.error('Failed to remove intersection:', err)
+    }
   }
 
   useEffect(() => {
@@ -100,6 +157,37 @@ function MapView() {
           <p className="map-subtitle">Multi-Agent System Overlay · Pune City</p>
         </div>
         <div className="map-stats">
+          <button 
+            onClick={async () => {
+              try {
+                await axios.post('/reset_simulation')
+                agentHeadings.current = {}
+              } catch (err) {
+                console.error('Failed to reset:', err)
+              }
+            }}
+            style={{
+              background: 'linear-gradient(135deg, #ef4444, #dc2626)',
+              border: 'none',
+              color: '#fff',
+              padding: '8px 16px',
+              borderRadius: '8px',
+              cursor: 'pointer',
+              fontFamily: 'Geist, sans-serif',
+              fontSize: '12px',
+              fontWeight: '600',
+              letterSpacing: '0.5px',
+              display: 'flex',
+              alignItems: 'center',
+              gap: '6px',
+              marginRight: '12px',
+              transition: 'all 0.2s',
+              boxShadow: '0 2px 8px rgba(239,68,68,0.3)'
+            }}
+          >
+            <span className="material-symbols-outlined" style={{ fontSize: '16px' }}>restart_alt</span>
+            Reset
+          </button>
           <div className="map-stat">
             <span className="map-stat-label">Active Agents</span>
             <span className="map-stat-value">{simulationData.simulation_state.total_agents}</span>
@@ -165,6 +253,14 @@ function MapView() {
                   key={intersection.intersection_id}
                   position={[lat, lng]}
                   icon={createIntersectionIcon(getSignalColor(intersection.signal))}
+                  draggable={true}
+                  eventHandlers={{
+                    dragend: (e) => handleIntersectionDragEnd(intersection.intersection_id, e),
+                    contextmenu: (e) => {
+                      e.originalEvent.preventDefault()
+                      handleRemoveIntersection(intersection.intersection_id)
+                    }
+                  }}
                 >
                   <Popup>
                     <div className="map-popup">
@@ -185,6 +281,7 @@ function MapView() {
                           {intersection.congestion_level}
                         </span>
                       </div>
+                      <div style={{ marginTop: '8px', fontSize: '10px', color: '#888' }}>Drag to move · Right-click to remove</div>
                       {intersection.congestion_level === 'HIGH' && (
                         <div className="popup-alert">
                           ⚠️ <strong>Why congested?</strong><br/>
@@ -202,14 +299,35 @@ function MapView() {
               const [lat, lng] = mapSimToLatLng(agent.position[0], agent.position[1])
               const color = getStatusColor(agent.status)
               
+              // Calculate heading for truck rotation
+              let heading = agentHeadings.current[agent.id]?.heading || 0
+              const prevPos = agentHeadings.current[agent.id]?.pos
+              
+              if (prevPos && (prevPos[0] !== lat || prevPos[1] !== lng)) {
+                // dy is North/South (lat), dx is East/West (lng)
+                // Math.atan2(dx, dy) gives 0 for North, 90 for East
+                const dy = lat - prevPos[0]
+                const dx = lng - prevPos[1]
+                heading = Math.atan2(dx, dy) * (180 / Math.PI)
+                agentHeadings.current[agent.id] = { pos: [lat, lng], heading }
+              } else if (!prevPos) {
+                agentHeadings.current[agent.id] = { pos: [lat, lng], heading: 0 }
+              }
+              
               return (
                 <React.Fragment key={agent.id}>
                   {/* Agent marker */}
                   <Marker
                     position={[lat, lng]}
-                    icon={createAgentIcon(color, agent.status)}
+                    icon={createAgentIcon(color, agent.status, heading)}
+                    draggable={true}
                     eventHandlers={{
-                      click: () => setSelectedAgent(agent.id)
+                      click: () => setSelectedAgent(agent.id),
+                      dragend: (e) => handleAgentDragEnd(agent.id, e),
+                      contextmenu: (e) => {
+                        e.originalEvent.preventDefault()
+                        handleRemoveAgent(agent.id)
+                      }
                     }}
                   >
                     <Popup>
@@ -242,6 +360,7 @@ function MapView() {
                             <small>Connected to: {agent.neighbors.join(', ')}</small>
                           </div>
                         )}
+                        <div style={{ marginTop: '8px', fontSize: '10px', color: '#888' }}>Drag to move · Right-click to remove</div>
                       </div>
                     </Popup>
                   </Marker>
