@@ -1,8 +1,9 @@
 #!/bin/bash
 # Build script for Render deployment
+set -e
 
 echo "==> Building React frontend..."
-npm install
+npm install --include=dev
 npm run build
 
 echo "==> Installing Python dependencies..."

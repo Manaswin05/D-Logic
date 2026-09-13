@@ -1,3 +1,11 @@
+# ── Build React Frontend ─────────────────────────────────────
+FROM node:18-alpine AS frontend-builder
+WORKDIR /app
+COPY package*.json ./
+RUN npm install
+COPY . .
+RUN npm run build
+
 # ── Python / Flask runtime ────────────────────────────────────────
 FROM python:3.11-slim
 
@@ -19,19 +27,12 @@ RUN pip install --no-cache-dir -r requirements.txt
 # Copy application code
 COPY app.py ./
 
-# Copy pre-built React frontend (already built locally)
-COPY dist/ ./dist/
+# Copy pre-built React frontend from builder stage
+COPY --from=frontend-builder /app/dist ./dist/
 
-# Hugging Face Spaces requires port 7860
-ENV PORT=7860
-
-# Expose the port HF Spaces expects
-EXPOSE 7860
+# Set PORT environment variable (default to 10000 for local, Render provides its own)
+ENV PORT=10000
+EXPOSE $PORT
 
 # Start gunicorn (same command as Render Procfile)
-CMD ["gunicorn", "app:app", \
-     "--bind", "0.0.0.0:7860", \
-     "--workers", "1", \
-     "--threads", "2", \
-     "--timeout", "120", \
-     "--log-level", "info"]
+CMD ["sh", "-c", "gunicorn app:app --bind 0.0.0.0:$PORT --workers 1 --threads 2 --timeout 120 --log-level info"]
