@@ -172,6 +172,8 @@ class GNNMAPPORouter:
         import random
         from scipy.spatial import Delaunay
         
+        import math
+        
         # Create a more realistic distributed network for simulation
         random.seed(1337)  # Consistent layout
         num_intersections = 30
@@ -179,8 +181,16 @@ class GNNMAPPORouter:
         points = []
         
         for i in range(num_intersections):
-            x = random.uniform(40, 560)
-            y = random.uniform(40, 560)
+            # Generate points in an organic blob shape instead of a perfect square
+            # using random radius and angle
+            angle = random.uniform(0, 2 * math.pi)
+            # Use beta distribution or square root to avoid clumping at center
+            r = math.sqrt(random.uniform(0.1, 1.0)) * 250
+            
+            x = 300 + r * math.cos(angle)
+            # Add some slight stretching to make it non-circular
+            y = 300 + (r * 0.8) * math.sin(angle)
+            
             intersection_id = f'N{i}'
             intersections.append((intersection_id, (x, y)))
             points.append([x, y])
@@ -399,6 +409,7 @@ class DLOGICSimulation:
     def initialize_demo_agents(self):
         """Initialize demo agents for simulation"""
         import random
+        import math
         random.seed(42)
         demo_agents = []
         tasks = ['delivery', 'patrol', 'rescue', 'transport', 'monitor']
@@ -406,8 +417,13 @@ class DLOGICSimulation:
         
         for i in range(1, 21):
             agent_id = f'AGENT_{i:03d}'
-            x = random.uniform(50, 550)
-            y = random.uniform(50, 550)
+            
+            # Generate agents in a similar organic shape as the road network
+            angle = random.uniform(0, 2 * math.pi)
+            r = math.sqrt(random.uniform(0.1, 1.0)) * 240
+            x = 300 + r * math.cos(angle)
+            y = 300 + (r * 0.8) * math.sin(angle)
+            
             speed = random.uniform(20, 50)
             battery = random.uniform(60, 100)
             task = random.choice(tasks)
