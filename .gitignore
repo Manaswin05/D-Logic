@@ -32,9 +32,28 @@ yarn-debug.log*
 yarn-error.log*
 .pnpm-debug.log*
 
-# Build
-# dist/  # Allow dist for deployment
+# Build output
+dist/
 build/
+
+# Docs and non-code files
+docs/
+Docs/
+*.pdf
+*.pptx
+*.ppt
+*.docx
+*.doc
+
+# Extra markdown docs (keep only README.md)
+D-LOGIC_README.md
+DEPLOY_CHECKLIST.md
+IMPLEMENTATION_SUMMARY.md
+MAPVIEW_ALGORITHMS.md
+PERFORMANCE_LOGS_IMPLEMENTATION.md
+RENDER_READY.md
+SIMULATION_LOGS_FEATURE.md
+USER_GUIDE.md
 
 # IDE
 .vscode/
