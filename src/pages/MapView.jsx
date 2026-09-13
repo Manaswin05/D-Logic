@@ -51,6 +51,8 @@ function MapView() {
   const centerPosition = [18.5204, 73.8567] // Pune City Center
   const [simulationData, setSimulationData] = useState(null)
   const [selectedAgent, setSelectedAgent] = useState(null)
+  const [isBottomBarOpen, setIsBottomBarOpen] = useState(false)
+  const [isLegendOpen, setIsLegendOpen] = useState(false)
   const agentHeadings = useRef({})
 
   const mapSimToLatLng = (x, y) => {
@@ -144,9 +146,9 @@ function MapView() {
 
   const getSignalColor = (signal) => {
     switch(signal) {
-      case 'green': return '#00ff00'
-      case 'yellow': return '#ffff00'
-      case 'red': return '#ff0000'
+      case 'green': return '#10b981'
+      case 'yellow': return '#f59e0b'
+      case 'red': return '#ef4444'
       default: return '#666'
     }
   }
@@ -165,123 +167,62 @@ function MapView() {
 
   return (
     <>
-      <div className="map-header">
-        <div>
-          <h2 className="map-title">D-LOGIC Map View</h2>
-          <p className="map-subtitle">Multi-Agent System Overlay · Pune City</p>
-        </div>
-        <div className="map-stats">
-          <button 
-            onClick={async () => {
-              try {
-                await axios.post('/add_agent', {})
-              } catch (err) {
-                console.error('Failed to add agent:', err)
-              }
-            }}
-            style={{
-              background: 'linear-gradient(135deg, #10b981, #059669)',
-              border: 'none',
-              color: '#fff',
-              padding: '8px 16px',
-              borderRadius: '8px',
-              cursor: 'pointer',
-              fontFamily: 'Geist, sans-serif',
-              fontSize: '12px',
-              fontWeight: '600',
-              letterSpacing: '0.5px',
-              display: 'flex',
-              alignItems: 'center',
-              gap: '6px',
-              marginRight: '12px',
-              transition: 'all 0.2s',
-              boxShadow: '0 2px 8px rgba(16, 185, 129, 0.3)'
-            }}
-          >
-            <span className="material-symbols-outlined" style={{ fontSize: '16px' }}>add_circle</span>
-            Add Agent
-          </button>
-          <button 
-            onClick={async () => {
-              try {
-                await axios.post('/reset_simulation')
-                agentHeadings.current = {}
-              } catch (err) {
-                console.error('Failed to reset:', err)
-              }
-            }}
-            style={{
-              background: 'linear-gradient(135deg, #ef4444, #dc2626)',
-              border: 'none',
-              color: '#fff',
-              padding: '8px 16px',
-              borderRadius: '8px',
-              cursor: 'pointer',
-              fontFamily: 'Geist, sans-serif',
-              fontSize: '12px',
-              fontWeight: '600',
-              letterSpacing: '0.5px',
-              display: 'flex',
-              alignItems: 'center',
-              gap: '6px',
-              marginRight: '12px',
-              transition: 'all 0.2s',
-              boxShadow: '0 2px 8px rgba(239,68,68,0.3)'
-            }}
-          >
-            <span className="material-symbols-outlined" style={{ fontSize: '16px' }}>restart_alt</span>
-            Reset
-          </button>
-          <div className="map-stat">
-            <span className="map-stat-label">Active Agents</span>
-            <span className="map-stat-value">{simulationData.simulation_state.total_agents}</span>
-          </div>
-          <div className="map-stat">
-            <span className="map-stat-label">Step</span>
-            <span className="map-stat-value">{simulationData.simulation_state.step}</span>
-          </div>
-          <div className="map-stat">
-            <span className="map-stat-label">Performance</span>
-            <span className="map-stat-value">
-              {(simulationData.simulation_state.system_performance * 100).toFixed(0)}%
-            </span>
-          </div>
-        </div>
-      </div>
+      <div className="data-card map-panel" style={{ position: 'relative' }}>
+        {/* Top Right Controls (Legend + System Toggle) */}
+        <div className="map-legend-container">
+          <div style={{ display: 'flex', gap: '8px', alignItems: 'flex-start' }}>
+            {/* System Info Toggle Button */}
+            {(!isBottomBarOpen && !selectedAgent) && (
+              <button 
+                className="map-legend-toggle"
+                style={{background: 'var(--surface)', color: 'var(--t-primary)'}}
+                onClick={() => setIsBottomBarOpen(true)}
+              >
+                <span className="material-symbols-outlined" style={{color: '#10b981'}}>hub</span>
+              </button>
+            )}
 
-      <div className="data-card map-panel">
-        <div className="map-panel-bar">
-          <span className="material-symbols-outlined">map</span>
-          <span className="map-panel-label">Live Traffic Map with D-LOGIC Agents</span>
-          <div className="map-legend">
-            <div className="legend-item" style={{ marginRight: '15px' }}>
-              <span style={{ fontSize: '11px', color: '#888', marginRight: '8px', fontWeight: '600', letterSpacing: '0.5px' }}>AGENTS:</span>
-              <div className="legend-dot" style={{ backgroundColor: '#ff6400', boxShadow: '0 0 8px #ff6400' }}></div>
-              <span>Moving</span>
-            </div>
-            <div className="legend-item">
-              <div className="legend-dot" style={{ backgroundColor: '#ff00ff', boxShadow: '0 0 8px #ff00ff' }}></div>
-              <span>Executing</span>
-            </div>
-            <div className="legend-item">
-              <div className="legend-dot" style={{ backgroundColor: '#0064ff', boxShadow: '0 0 8px #0064ff' }}></div>
-              <span>Idle</span>
-            </div>
-            <div className="legend-item" style={{ marginRight: '20px' }}>
-              <div className="legend-dot" style={{ backgroundColor: '#ef4444', boxShadow: '0 0 8px #ef4444' }}></div>
-              <span style={{ color: '#ef4444', fontWeight: 'bold' }}>Failed</span>
-            </div>
-            <div className="legend-item">
-              <span style={{ fontSize: '11px', color: '#888', marginRight: '8px', fontWeight: '600', letterSpacing: '0.5px' }}>NODES:</span>
-              <div className="legend-dot" style={{ backgroundColor: 'transparent', border: '2px solid #00ff00', borderRadius: '2px', transform: 'rotate(45deg)' }}></div>
-              <span>Clear</span>
-            </div>
-            <div className="legend-item">
-              <div className="legend-dot" style={{ backgroundColor: 'transparent', border: '2px solid #ff0000', borderRadius: '2px', transform: 'rotate(45deg)' }}></div>
-              <span>Congested</span>
-            </div>
+            {/* Legend Toggle Button */}
+            <button className="map-legend-toggle" onClick={() => setIsLegendOpen(!isLegendOpen)}>
+              <span className="material-symbols-outlined">
+                {isLegendOpen ? 'close' : 'map'}
+              </span>
+              {!isLegendOpen && <span style={{fontSize: '12px', fontWeight: 'bold'}}>Legend</span>}
+            </button>
           </div>
+          
+          {isLegendOpen && (
+            <div className="map-legend-popup">
+              <div className="legend-item">
+                <span style={{ fontSize: '11px', color: '#888', marginRight: '8px', fontWeight: '600', letterSpacing: '0.5px' }}>AGENTS:</span>
+                <div className="legend-dot" style={{ backgroundColor: '#ff6400', boxShadow: '0 0 8px #ff6400' }}></div>
+                <span>Moving</span>
+              </div>
+              <div className="legend-item">
+                <div className="legend-dot" style={{ backgroundColor: '#ff00ff', boxShadow: '0 0 8px #ff00ff' }}></div>
+                <span>Executing</span>
+              </div>
+              <div className="legend-item">
+                <div className="legend-dot" style={{ backgroundColor: '#0064ff', boxShadow: '0 0 8px #0064ff' }}></div>
+                <span>Idle</span>
+              </div>
+              <div className="legend-item">
+                <div className="legend-dot" style={{ backgroundColor: '#ef4444', boxShadow: '0 0 8px #ef4444' }}></div>
+                <span style={{ color: '#ef4444', fontWeight: 'bold' }}>Failed</span>
+              </div>
+              <div className="legend-item" style={{marginTop: '8px'}}>
+                <span style={{ fontSize: '11px', color: '#888', marginRight: '8px', fontWeight: '600', letterSpacing: '0.5px' }}>NODES:</span>
+                <div className="legend-dot" style={{ backgroundColor: 'transparent', border: '2px solid #10b981', borderRadius: '2px', transform: 'rotate(45deg)' }}></div>
+                <span>Clear</span>
+              </div>
+              <div className="legend-item">
+                <div className="legend-dot" style={{ backgroundColor: 'transparent', border: '2px solid #ef4444', borderRadius: '2px', transform: 'rotate(45deg)' }}></div>
+                <span>Congested</span>
+              </div>
+            </div>
+          )}
         </div>
+
         <div className="map-inner">
           <MapContainer center={position} zoom={12} style={{ height: '100%', width: '100%' }}>
             <TileLayer
@@ -332,6 +273,21 @@ function MapView() {
                           {intersection.vehicle_count} agents occupy this local sector. MAPPO is actively dynamically rerouting traffic around this node.
                         </div>
                       )}
+                      
+                      <button 
+                        onClick={(e) => {
+                          e.stopPropagation();
+                          handleRemoveIntersection(intersection.intersection_id);
+                        }}
+                        style={{
+                          marginTop: '12px', width: '100%', background: '#ef4444', color: '#fff', 
+                          border: 'none', padding: '6px', borderRadius: '4px', cursor: 'pointer', 
+                          fontSize: '12px', display: 'flex', alignItems: 'center', justifyContent: 'center', gap: '4px'
+                        }}
+                      >
+                        <span className="material-symbols-outlined" style={{fontSize: '14px'}}>delete</span>
+                        Remove Warehouse
+                      </button>
                     </div>
                   </Popup>
                 </Marker>
@@ -474,42 +430,155 @@ function MapView() {
         </div>
       </div>
 
-      {/* Selected Agent Info Panel */}
-      {selectedAgent && (
-        <div className="map-agent-info">
-          <div className="map-agent-info-header">
-            <span>Selected: {selectedAgent}</span>
-            <button onClick={() => setSelectedAgent(null)}>×</button>
+      {/* Selected Agent or System Info Panel */}
+      {(isBottomBarOpen || selectedAgent) && (
+        <div className="map-agent-info" style={{ maxHeight: '40vh', overflowY: 'auto', paddingTop: '12px' }}>
+          {/* Universal Collapse Handle */}
+          <div style={{display: 'flex', justifyContent: 'center', marginBottom: '8px'}}>
+            <button 
+              style={{
+                background: 'rgba(255, 255, 255, 0.1)', 
+                border: 'none', 
+                borderRadius: '50%', 
+                width: '32px', 
+                height: '32px', 
+                display: 'flex', 
+                alignItems: 'center', 
+                justifyContent: 'center',
+                cursor: 'pointer',
+                color: 'var(--t-variant)'
+              }}
+              onClick={() => {
+                setIsBottomBarOpen(false);
+                if (selectedAgent) setSelectedAgent(null);
+              }}
+            >
+              <span className="material-symbols-outlined">keyboard_arrow_down</span>
+            </button>
           </div>
-          <div className="map-agent-info-body">
-            {simulationData.agents.filter(a => a.id === selectedAgent).map(agent => (
-              <div key={agent.id}>
-                <div className="info-row">
-                  <span>Task:</span>
-                  <span>{agent.task}</span>
+        {selectedAgent ? (
+          simulationData.agents.filter(a => a.id === selectedAgent).map(agent => (
+            <div key={agent.id} className="bs-content" style={{paddingTop: '0'}}>
+              {/* Location Timeline */}
+              <div className="bs-timeline">
+                <div className="bs-timeline-line"></div>
+                <div className="bs-location-row">
+                  <span className="bs-dot green"></span>
+                  <span className="bs-location-text">Origin Sector A2</span>
                 </div>
-                <div className="info-row">
-                  <span>Status:</span>
-                  <span style={{ color: getStatusColor(agent.status) }}>
-                    {agent.status}
-                  </span>
+                <div className="bs-location-row">
+                  <span className="bs-dot red"></span>
+                  <span className="bs-location-text">Destination Sector {agent.task.split(' ').pop()}</span>
                 </div>
-                <div className="info-row">
-                  <span>Speed:</span>
-                  <span>{agent.speed.toFixed(1)} km/h</span>
-                </div>
-                <div className="info-row">
-                  <span>Battery:</span>
-                  <span>{agent.battery.toFixed(0)}%</span>
-                </div>
-                <div className="info-row">
-                  <span>Neighbors:</span>
-                  <span>{agent.neighbors.length}</span>
+                <div className="bs-now-btn">
+                  <span className="material-symbols-outlined">schedule</span>
+                  <span>Now</span>
                 </div>
               </div>
-            ))}
+
+              {/* Agent Card */}
+              <div className="bs-agent-card">
+                <div className="bs-agent-icon">
+                  <span className="material-symbols-outlined">smart_toy</span>
+                </div>
+                <div className="bs-agent-details">
+                  <span className="bs-agent-name">{agent.id}</span>
+                  <span className="bs-agent-desc">Autonomous Delivery Pod</span>
+                </div>
+                <div className="bs-agent-stats">
+                  <span className="material-symbols-outlined">battery_charging_full</span>
+                  <span>{agent.battery.toFixed(0)}%</span>
+                </div>
+              </div>
+
+              {/* Action Tabs */}
+              <div className="bs-action-tabs">
+                <div className="bs-tab">
+                  <span className="material-symbols-outlined" style={{color: '#10b981'}}>route</span>
+                  <span>Route</span>
+                </div>
+                <div className="bs-tab">
+                  <span className="material-symbols-outlined" style={{color: '#3b82f6'}}>list_alt</span>
+                  <span>Logs</span>
+                </div>
+                <div className="bs-tab" onClick={async () => {
+                  await handleRemoveAgent(agent.id);
+                  setSelectedAgent(null);
+                }}>
+                  <span className="material-symbols-outlined" style={{color: '#ef4444'}}>delete</span>
+                  <span>Remove Agent</span>
+                </div>
+              </div>
+
+              {/* Primary Action */}
+              <button className="bs-primary-btn" onClick={() => setSelectedAgent(null)}>
+                Dispatch {agent.id}
+              </button>
+            </div>
+          ))
+        ) : (
+          <div className="bs-content" style={{paddingTop: '0'}}>
+            {/* System Card */}
+            <div className="bs-agent-card" style={{position: 'relative'}}>
+              <div className="bs-agent-icon" style={{background: 'rgba(16, 185, 129, 0.1)'}}>
+                <span className="material-symbols-outlined" style={{color: '#10b981'}}>hub</span>
+              </div>
+              <div className="bs-agent-details">
+                <span className="bs-agent-name">Multi-Agent Control</span>
+                <span className="bs-agent-desc">System Performance</span>
+              </div>
+              <div className="bs-agent-stats" style={{flexDirection: 'row', alignItems: 'center', gap: '6px', marginRight: '24px'}}>
+                <span className="material-symbols-outlined" style={{color: '#10b981'}}>speed</span>
+                <span style={{fontSize: '16px'}}>{(simulationData.simulation_state.system_performance * 100).toFixed(0)}%</span>
+              </div>
+            </div>
+
+            {/* Action Tabs - Stats */}
+            <div className="bs-action-tabs" style={{ padding: '12px 0' }}>
+              <div className="bs-tab" style={{flexDirection: 'column', alignItems: 'flex-start', gap: '4px', cursor: 'default'}}>
+                <span style={{fontSize: '11px', color: 'var(--t-variant)', fontWeight: '600', textTransform: 'uppercase'}}>Active Agents</span>
+                <div style={{display: 'flex', alignItems: 'center', gap: '6px'}}>
+                  <span className="material-symbols-outlined" style={{fontSize: '18px', color: '#10b981'}}>smart_toy</span>
+                  <span style={{color: '#10b981', fontSize: '16px', fontWeight: 'bold'}}>{simulationData.simulation_state.total_agents}</span>
+                </div>
+              </div>
+              <div className="bs-tab" style={{flexDirection: 'column', alignItems: 'flex-start', gap: '4px', cursor: 'default'}}>
+                <span style={{fontSize: '11px', color: 'var(--t-variant)', fontWeight: '600', textTransform: 'uppercase'}}>Current Step</span>
+                <div style={{display: 'flex', alignItems: 'center', gap: '6px'}}>
+                  <span className="material-symbols-outlined" style={{fontSize: '18px', color: '#3b82f6'}}>step</span>
+                  <span style={{color: '#3b82f6', fontSize: '16px', fontWeight: 'bold'}}>{simulationData.simulation_state.step}</span>
+                </div>
+              </div>
+              <div className="bs-tab" onClick={async () => {
+                try {
+                  await axios.post('/reset_simulation')
+                  agentHeadings.current = {}
+                  setSelectedAgent(null)
+                  // Optionally re-fetch immediately so UI responds faster
+                  const response = await axios.get('/simulation_data')
+                  setSimulationData(response.data)
+                } catch (err) {
+                  console.error('Failed to reset:', err)
+                }
+              }} style={{flexDirection: 'column', alignItems: 'center', gap: '4px'}}>
+                <span className="material-symbols-outlined" style={{color: '#ef4444', background: 'rgba(239, 68, 68, 0.1)', padding: '6px', borderRadius: '50%'}}>restart_alt</span>
+                <span style={{fontSize: '11px', color: '#ef4444'}}>Reset</span>
+              </div>
+            </div>
+
+            {/* Primary Action */}
+            <button className="bs-primary-btn" onClick={async () => {
+              try {
+                await axios.post('/add_agent', {})
+              } catch (err) {
+                console.error('Failed to add agent:', err)
+              }
+            }}>
+              Add New Agent
+            </button>
           </div>
-        </div>
+        )}
+      </div>
       )}
     </>
   )

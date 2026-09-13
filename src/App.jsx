@@ -1,4 +1,4 @@
-import React from 'react'
+import React, { useState } from 'react'
 import { BrowserRouter as Router, Routes, Route, Navigate } from 'react-router-dom'
 import Sidebar from './components/Sidebar'
 import Topbar from './components/Topbar'
@@ -8,12 +8,14 @@ import MapView from './pages/MapView'
 import './App.css'
 
 function App() {
+  const [isSidebarOpen, setIsSidebarOpen] = useState(false)
+
   return (
     <Router>
       <div className="app-shell">
-        <Sidebar />
+        <Sidebar isOpen={isSidebarOpen} setIsOpen={setIsSidebarOpen} />
         <div className="app-main">
-          <Topbar />
+          <Topbar onMenuClick={() => setIsSidebarOpen(true)} />
           <main className="app-body">
             <Routes>
               <Route path="/" element={<Navigate to="/dashboard" />} />
@@ -28,5 +30,6 @@ function App() {
     </Router>
   )
 }
+
 
 export default App

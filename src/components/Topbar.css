@@ -23,6 +23,18 @@
   gap: 12px;
 }
 
+.topbar-menu-btn {
+  display: none;
+  align-items: center;
+  justify-content: center;
+  background: none;
+  border: none;
+  color: var(--t-primary);
+  cursor: pointer;
+  padding: 4px;
+}
+
+
 .topbar-brand {
   font-family: var(--f-mono);
   font-size: 12px;
@@ -126,4 +138,22 @@
 
 .topbar-icon-btn .material-symbols-outlined {
   font-size: 22px;
+}
+
+@media (max-width: 768px) {
+  .topbar {
+    padding: 0 16px;
+  }
+  
+  .topbar-menu-btn {
+    display: flex;
+  }
+
+  .topbar-nav {
+    display: none; /* Hide nav links on mobile, rely on side nav */
+  }
+  
+  .topbar-status {
+    display: none; /* Hide system status string to save space */
+  }
 }

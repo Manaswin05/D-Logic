@@ -2,13 +2,16 @@ import React from 'react'
 import { Link, useLocation } from 'react-router-dom'
 import './Topbar.css'
 
-function Topbar() {
+function Topbar({ onMenuClick }) {
   const { pathname } = useLocation()
 
   return (
     <header className="topbar">
       {/* Left */}
       <div className="topbar-left">
+        <button className="topbar-menu-btn" onClick={onMenuClick}>
+          <span className="material-symbols-outlined">menu</span>
+        </button>
         <span className="topbar-brand">D-LOGIC Control Center</span>
         <span className="topbar-live">
           <span className="pulse-dot" />

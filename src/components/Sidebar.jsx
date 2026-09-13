@@ -2,7 +2,7 @@ import React from 'react'
 import { Link, useLocation } from 'react-router-dom'
 import './Sidebar.css'
 
-function Sidebar() {
+function Sidebar({ isOpen, setIsOpen }) {
   const { pathname } = useLocation()
 
   const mainTabs = [
@@ -17,48 +17,56 @@ function Sidebar() {
     { icon: 'help',     label: 'Support' },
   ]
 
+  const closeSidebar = () => setIsOpen(false)
+
   return (
-    <nav className="icon-sidebar">
-      <div className="sb-brand">
-        <span className="material-symbols-outlined" style={{ fontVariationSettings: "'FILL' 1" }}>
-          hub
-        </span>
-      </div>
+    <>
+      <div 
+        className={`sidebar-overlay ${isOpen ? 'open' : ''}`} 
+        onClick={closeSidebar}
+      />
+      <nav className={`icon-sidebar ${isOpen ? 'open' : ''}`}>
+        <div className="sb-brand">
+          <span className="material-symbols-outlined" style={{ fontVariationSettings: "'FILL' 1" }}>
+            hub
+          </span>
+        </div>
 
-      <div className="sb-nav">
-        {mainTabs.map(tab => {
-          const isActive = pathname === tab.to
-          if (tab.disabled) {
+        <div className="sb-nav">
+          {mainTabs.map(tab => {
+            const isActive = pathname === tab.to
+            if (tab.disabled) {
+              return (
+                <div key={tab.label} className="sb-tab" style={{ opacity: 0.4, cursor: 'default' }}>
+                  <span className="material-symbols-outlined">{tab.icon}</span>
+                  <span className="sb-tab-label">{tab.label}</span>
+                </div>
+              )
+            }
             return (
-              <div key={tab.label} className="sb-tab" style={{ opacity: 0.4, cursor: 'default' }}>
-                <span className="material-symbols-outlined">{tab.icon}</span>
+              <Link key={tab.to} to={tab.to} className={`sb-tab${isActive ? ' active' : ''}`} onClick={closeSidebar}>
+                <span
+                  className="material-symbols-outlined"
+                  style={isActive && tab.fill ? { fontVariationSettings: "'FILL' 1" } : undefined}
+                >
+                  {tab.icon}
+                </span>
                 <span className="sb-tab-label">{tab.label}</span>
-              </div>
+              </Link>
             )
-          }
-          return (
-            <Link key={tab.to} to={tab.to} className={`sb-tab${isActive ? ' active' : ''}`}>
-              <span
-                className="material-symbols-outlined"
-                style={isActive && tab.fill ? { fontVariationSettings: "'FILL' 1" } : undefined}
-              >
-                {tab.icon}
-              </span>
-              <span className="sb-tab-label">{tab.label}</span>
-            </Link>
-          )
-        })}
-      </div>
+          })}
+        </div>
 
-      <div className="sb-footer">
-        {footerTabs.map(tab => (
-          <div key={tab.label} className="sb-tab" style={{ opacity: 0.5, cursor: 'default' }}>
-            <span className="material-symbols-outlined">{tab.icon}</span>
-            <span className="sb-tab-label">{tab.label}</span>
-          </div>
-        ))}
-      </div>
-    </nav>
+        <div className="sb-footer">
+          {footerTabs.map(tab => (
+            <div key={tab.label} className="sb-tab" style={{ opacity: 0.5, cursor: 'default' }}>
+              <span className="material-symbols-outlined">{tab.icon}</span>
+              <span className="sb-tab-label">{tab.label}</span>
+            </div>
+          ))}
+        </div>
+      </nav>
+    </>
   )
 }
 

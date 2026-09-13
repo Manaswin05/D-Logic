@@ -1,8 +1,10 @@
 import React, { useState, useEffect, useRef } from 'react'
+import { useNavigate } from 'react-router-dom'
 import axios from 'axios'
 import './Dashboard.css'
 
 function Dashboard() {
+  const navigate = useNavigate()
   const [simulationData, setSimulationData] = useState(null)
   const [selectedAgent, setSelectedAgent] = useState(null)
   const [agentDetails, setAgentDetails] = useState(null)
@@ -146,20 +148,20 @@ function Dashboard() {
 
   const getStatusColor = (status) => {
     switch(status) {
-      case 'moving': return '#ff6400'
-      case 'executing': return '#ff00ff'
-      case 'idle': return '#0064ff'
-      case 'failed': return '#ef4444' // Red color for failure
-      default: return '#666'
+      case 'moving': return '#f59e0b' // amber
+      case 'executing': return '#8b5cf6' // purple
+      case 'idle': return '#3b82f6' // blue
+      case 'failed': return '#ef4444' // red
+      default: return '#6b7280'
     }
   }
 
   const getSignalColor = (signal) => {
     switch(signal) {
-      case 'green': return '#00ff00'
-      case 'yellow': return '#ffff00'
-      case 'red': return '#ff0000'
-      default: return '#666'
+      case 'green': return '#10b981' // emerald
+      case 'yellow': return '#f59e0b' // amber
+      case 'red': return '#ef4444' // red
+      default: return '#6b7280'
     }
   }
 
@@ -180,12 +182,18 @@ function Dashboard() {
           <h2 className="dash-title">D-LOGIC Multi-Agent System</h2>
           <p className="dash-subtitle">Decentralized Pre-Dispatch Coordination for Autonomous Mobility Fleets</p>
         </div>
-        <button className="sim-control-btn" onClick={toggleSimulation}>
-          <span className="material-symbols-outlined">
-            {simulationRunning ? 'pause' : 'play_arrow'}
-          </span>
-          {simulationRunning ? 'Pause' : 'Start'} Simulation
-        </button>
+        <div style={{display: 'flex', gap: '12px', alignItems: 'center'}}>
+          <button className="sim-control-btn" style={{background: '#10b981', color: '#fff'}} onClick={() => navigate('/map')}>
+            <span className="material-symbols-outlined">map</span>
+            Open Maps
+          </button>
+          <button className="sim-control-btn" onClick={toggleSimulation}>
+            <span className="material-symbols-outlined">
+              {simulationRunning ? 'pause' : 'play_arrow'}
+            </span>
+            {simulationRunning ? 'Pause' : 'Start'} Simulation
+          </button>
+        </div>
       </div>
 
       {/* KPI cards */}

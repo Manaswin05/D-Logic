@@ -25,3 +25,19 @@
   flex-direction: column;
   gap: 16px;
 }
+
+@media (max-width: 768px) {
+  .app-main {
+    margin-left: 0;
+  }
+  
+  .app-body {
+    padding: 16px 16px 80px 16px; /* larger padding bottom on mobile to clear nav bars */
+  }
+
+  /* Utility class for full bleed map view on mobile */
+  .app-body.no-padding {
+    padding: 0;
+  }
+}
+

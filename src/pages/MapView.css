@@ -93,16 +93,44 @@
 
 .map-stat-value {
   font-size: 18px;
-  color: #00ff00;
+  color: #10b981;
   font-family: var(--f-mono);
   font-weight: 700;
 }
 
-.map-legend {
+.map-legend-container {
+  position: absolute;
+  top: 16px;
+  right: 16px;
+  z-index: 1000;
   display: flex;
-  gap: 16px;
-  margin-left: auto;
+  flex-direction: column;
+  align-items: flex-end;
+  gap: 8px;
+}
+
+.map-legend-toggle {
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  padding: 8px 12px;
+  color: var(--t-primary);
+  display: flex;
   align-items: center;
+  gap: 8px;
+  cursor: pointer;
+  box-shadow: 0 4px 12px rgba(0,0,0,0.2);
+}
+
+.map-legend-popup {
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  padding: 16px;
+  box-shadow: 0 8px 24px rgba(0,0,0,0.4);
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
 }
 
 .legend-item {
@@ -121,6 +149,7 @@
   border: 2px solid white;
   box-shadow: 0 0 8px rgba(0,0,0,0.5);
 }
+
 
 .custom-agent-marker,
 .custom-intersection-marker {
@@ -201,83 +230,232 @@
 }
 
 .congestion-low {
-  color: #00ff00 !important;
+  color: #10b981 !important;
 }
 
 .congestion-medium {
-  color: #ffff00 !important;
+  color: #f59e0b !important;
 }
 
 .congestion-high {
-  color: #ff0000 !important;
+  color: #ef4444 !important;
 }
 
 .map-agent-info {
   position: fixed;
-  bottom: 24px;
-  right: 24px;
-  width: 280px;
-  background: rgba(0, 0, 0, 0.9);
-  border: 1px solid rgba(0, 255, 0, 0.3);
-  border-radius: 8px;
-  box-shadow: 0 8px 32px rgba(0, 0, 0, 0.5);
-  z-index: 1000;
-  backdrop-filter: blur(10px);
-}
-
-.map-agent-info-header {
-  display: flex;
-  justify-content: space-between;
-  align-items: center;
-  padding: 12px 16px;
-  background: rgba(0, 255, 0, 0.1);
-  border-bottom: 1px solid rgba(0, 255, 0, 0.2);
-  border-radius: 8px 8px 0 0;
-}
-
-.map-agent-info-header span {
-  font-family: var(--f-mono);
-  font-size: 13px;
-  font-weight: 700;
-  color: #00ff00;
-  letter-spacing: 0.05em;
-}
-
-.map-agent-info-header button {
-  background: none;
-  border: none;
-  color: var(--t-variant);
-  font-size: 24px;
-  cursor: pointer;
+  bottom: 0;
+  left: 50%;
+  transform: translateX(-50%);
+  width: 100%;
+  max-width: 400px;
+  border-radius: 24px 24px 0 0;
+  background: rgba(15, 15, 15, 0.7); /* Glassmorphism background */
+  backdrop-filter: blur(16px);
+  -webkit-backdrop-filter: blur(16px);
+  border: 1px solid rgba(255, 255, 255, 0.1);
+  border-bottom: none;
+  box-shadow: 0 -8px 32px rgba(0, 0, 0, 0.6);
   padding: 0;
-  line-height: 1;
-  transition: color 0.3s ease;
+  z-index: 1000;
 }
 
-.map-agent-info-header button:hover {
-  color: #ff0000;
-}
-
-.map-agent-info-body {
-  padding: 16px;
-}
-
-.info-row {
+/* Bottom Sheet Content */
+.bs-content {
   display: flex;
-  justify-content: space-between;
-  padding: 6px 0;
-  font-family: var(--f-mono);
-  font-size: 12px;
+  flex-direction: column;
+  padding: 12px 20px 24px 20px;
+  gap: 20px;
 }
 
-.info-row span:first-child {
-  color: var(--t-variant);
+/* Timeline */
+.bs-timeline {
+  position: relative;
+  display: flex;
+  flex-direction: column;
+  gap: 24px;
+  padding-left: 12px;
 }
 
-.info-row span:last-child {
-  font-weight: 600;
+.bs-timeline-line {
+  position: absolute;
+  left: 15px;
+  top: 6px;
+  bottom: 6px;
+  width: 2px;
+  background: var(--border-2);
+  z-index: 1;
+}
+
+.bs-location-row {
+  display: flex;
+  align-items: center;
+  gap: 16px;
+  position: relative;
+  z-index: 2;
+}
+
+.bs-dot {
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  background: var(--surface);
+  border: 2px solid var(--border);
+}
+
+.bs-dot.green { border-color: #10b981; background: #10b981; }
+.bs-dot.red { border-color: #ef4444; background: #ef4444; }
+
+.bs-location-text {
+  font-family: var(--f-body);
+  font-size: 15px;
+  font-weight: 500;
   color: var(--t-primary);
 }
+
+.bs-now-btn {
+  position: absolute;
+  right: 0;
+  top: 50%;
+  transform: translateY(-50%);
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 4px;
+  background: var(--surface-hi);
+  padding: 8px 12px;
+  border-radius: 12px;
+  border: 1px solid var(--border);
+  color: var(--t-primary);
+}
+
+.bs-now-btn .material-symbols-outlined {
+  font-size: 18px;
+}
+
+.bs-now-btn span:last-child {
+  font-family: var(--f-body);
+  font-size: 11px;
+  font-weight: 600;
+}
+
+/* Agent Card */
+.bs-agent-card {
+  display: flex;
+  align-items: center;
+  gap: 16px;
+  padding: 16px;
+  background: var(--surface-2);
+  border: 1px solid var(--border);
+  border-radius: 12px;
+}
+
+.bs-agent-icon {
+  width: 48px;
+  height: 48px;
+  background: var(--surface-hi);
+  border-radius: 8px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  color: var(--t-primary);
+}
+
+.bs-agent-icon .material-symbols-outlined {
+  font-size: 28px;
+}
+
+.bs-agent-details {
+  display: flex;
+  flex-direction: column;
+  flex: 1;
+}
+
+.bs-agent-name {
+  font-family: var(--f-body);
+  font-size: 16px;
+  font-weight: 700;
+  color: var(--t-primary);
+}
+
+.bs-agent-desc {
+  font-family: var(--f-body);
+  font-size: 12px;
+  color: var(--t-variant);
+}
+
+.bs-agent-stats {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-end;
+  color: var(--t-primary);
+}
+
+.bs-agent-stats span:last-child {
+  font-weight: 700;
+  font-size: 14px;
+}
+
+/* Action Tabs */
+.bs-action-tabs {
+  display: flex;
+  justify-content: space-between;
+  padding: 8px 16px;
+  border-top: 1px solid var(--border);
+  border-bottom: 1px solid var(--border);
+}
+
+.bs-tab {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  font-family: var(--f-body);
+  font-size: 14px;
+  font-weight: 600;
+  color: var(--t-primary);
+  cursor: pointer;
+}
+
+/* Primary Button */
+.bs-primary-btn {
+  width: 100%;
+  padding: 16px;
+  border-radius: 8px;
+  background: #ffffff; /* White button like Ola's black button on light theme, but inverted for dark theme */
+  color: #000000;
+  font-family: var(--f-body);
+  font-size: 16px;
+  font-weight: 700;
+  border: none;
+  cursor: pointer;
+  box-shadow: 0 4px 12px rgba(255,255,255,0.1);
+}
+
+.bs-primary-btn:active {
+  background: #e0e0e0;
+}
+
+.desktop-only {
+  display: flex;
+}
+
+.ola-back-btn {
+  position: absolute;
+  top: 16px;
+  left: 16px;
+  width: 48px;
+  height: 48px;
+  border-radius: 50%;
+  background: var(--surface);
+  color: var(--t-primary);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  border: 1px solid var(--border);
+  box-shadow: 0 4px 12px rgba(0,0,0,0.2);
+  z-index: 1000;
+  cursor: pointer;
+}
+
 
 /* Leaflet popup customization */
 .leaflet-popup-content-wrapper {
@@ -307,3 +485,113 @@
 .leaflet-interactive[stroke-opacity="0.3"] {
   animation: pulse-circle 2s ease-in-out infinite;
 }
+
+@media (max-width: 768px) {
+  .map-panel {
+    position: fixed;
+    top: 0;
+    left: 0;
+    right: 0;
+    bottom: 0; /* Fallback */
+    height: 100vh;
+    z-index: 30; /* Under sidebar overlay (45) and topbar (40), wait, we need it under topbar if we want topbar to show, but if it's full bleed, topbar might be hidden or float over it. */
+    margin: 0;
+    border-radius: 0;
+  }
+
+  .map-header {
+    position: absolute;
+    top: 76px; /* Below floating menu btn */
+    left: 16px;
+    right: 16px;
+    z-index: 1000;
+    background: rgba(20, 20, 20, 0.85);
+    backdrop-filter: blur(12px);
+    padding: 16px;
+    border-radius: 12px;
+    border: 1px solid rgba(255, 255, 255, 0.1);
+    box-shadow: 0 8px 32px rgba(0, 0, 0, 0.4);
+    flex-direction: column;
+    align-items: flex-start;
+    gap: 8px;
+  }
+
+  .map-agent-info {
+    max-width: 100%;
+  }
+
+  .map-stats {
+    flex-wrap: wrap;
+    gap: 12px;
+  }
+
+  .map-legend {
+    margin-left: 0;
+    margin-top: 8px;
+    flex-wrap: wrap;
+  }
+}
+
+/* Floating Buttons */
+.map-floating-locate-btn, .map-floating-menu-btn {
+  display: none;
+}
+
+@media (max-width: 768px) {
+  .map-floating-menu-btn {
+    display: flex;
+    position: absolute;
+    top: 16px;
+    left: 16px;
+    width: 48px;
+    height: 48px;
+    border-radius: 50%;
+    background: #fff;
+    color: #000;
+    align-items: center;
+    justify-content: center;
+    border: none;
+    box-shadow: 0 4px 12px rgba(0,0,0,0.2);
+    z-index: 1001; /* Above map-header */
+    cursor: pointer;
+  }
+
+  .map-floating-menu-btn:active {
+    background: #f0f0f0;
+  }
+
+  .map-floating-locate-btn {
+    display: flex;
+    position: absolute;
+    bottom: calc(auto + 20px); /* Just a fallback, we will position relative to bottom sheet via z-index */
+    /* Since the bottom sheet height can vary, a fixed bottom might overlap. We will use fixed positioning just above the sheet */
+    bottom: 300px; 
+    right: 16px;
+    width: 48px;
+    height: 48px;
+    border-radius: 50%;
+    background: #fff; /* Ola style white button */
+    color: #000;
+    align-items: center;
+    justify-content: center;
+    border: none;
+    box-shadow: 0 4px 12px rgba(0,0,0,0.2);
+    z-index: 999;
+    cursor: pointer;
+  }
+  
+  .map-floating-locate-btn:active {
+    background: #f0f0f0;
+  }
+
+  .desktop-only {
+    display: none !important;
+  }
+  
+  .map-agent-info {
+    max-width: 100%;
+    left: 0;
+    transform: none;
+  }
+}
+

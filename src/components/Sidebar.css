@@ -101,3 +101,42 @@
   align-items: center;
   margin-top: auto;
 }
+
+.sidebar-overlay {
+  display: none;
+}
+
+@media (max-width: 768px) {
+  .icon-sidebar {
+    left: -100%;
+    transition: left 0.3s cubic-bezier(0.4, 0, 0.2, 1);
+    background: rgba(20, 20, 20, 0.95);
+    backdrop-filter: blur(10px);
+    border-right: 1px solid var(--border-2);
+  }
+
+  .icon-sidebar.open {
+    left: 0;
+  }
+
+  .sidebar-overlay {
+    display: block;
+    position: fixed;
+    top: 0;
+    left: 0;
+    right: 0;
+    bottom: 0;
+    background: rgba(0, 0, 0, 0.5);
+    backdrop-filter: blur(4px);
+    z-index: 45;
+    opacity: 0;
+    pointer-events: none;
+    transition: opacity 0.3s;
+  }
+
+  .sidebar-overlay.open {
+    opacity: 1;
+    pointer-events: auto;
+  }
+}
+
