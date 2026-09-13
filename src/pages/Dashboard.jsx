@@ -102,10 +102,31 @@ function Dashboard() {
       } catch (err) {
         setTerminalHistory(prev => [...prev, { type: 'error', text: '[ERROR] Communication failure with deployment server.' }])
       }
+    } else if (lowerCmd.startsWith('remove agent')) {
+      const parts = cmd.split(' ');
+      let agentId = parts.length > 2 ? parts[2] : null;
+      
+      if (!agentId && simulationData && simulationData.agents.length > 0) {
+        agentId = simulationData.agents[simulationData.agents.length - 1].id;
+      }
+      
+      if (agentId) {
+        setTerminalHistory(prev => [...prev, { type: 'info', text: `> Initiating removal of ${agentId}...` }])
+        try {
+          const response = await axios.delete(`/remove_agent/${agentId}`)
+          if (response.data.status === 'success') {
+            setTerminalHistory(prev => [...prev, { type: 'success', text: `[SUCCESS] ${agentId} removed.` }])
+          }
+        } catch (err) {
+          setTerminalHistory(prev => [...prev, { type: 'error', text: `[ERROR] Failed to remove ${agentId}. Check if it exists.` }])
+        }
+      } else {
+        setTerminalHistory(prev => [...prev, { type: 'error', text: '[ERROR] No agents available to remove.' }])
+      }
     } else if (lowerCmd === 'clear') {
       setTerminalHistory([])
     } else {
-      setTerminalHistory(prev => [...prev, { type: 'error', text: `Command not recognized: ${cmd}. Try "add agent".` }])
+      setTerminalHistory(prev => [...prev, { type: 'error', text: `Command not recognized: ${cmd}. Try "add agent" or "remove agent [ID]".` }])
     }
   }
 

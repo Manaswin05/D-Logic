@@ -169,13 +169,22 @@ class GNNMAPPORouter:
         
     def initialize_road_network(self):
         """Initialize road network topology"""
-        # Create a simple grid network for simulation
-        intersections = [
-            ('A1', (100, 100)), ('A2', (300, 100)), ('A3', (500, 100)),
-            ('B1', (100, 300)), ('B2', (300, 300)), ('B3', (500, 300)),
-            ('C1', (100, 500)), ('C2', (300, 500)), ('C3', (500, 500))
-        ]
+        import random
+        from scipy.spatial import Delaunay
         
+        # Create a more realistic distributed network for simulation
+        random.seed(1337)  # Consistent layout
+        num_intersections = 30
+        intersections = []
+        points = []
+        
+        for i in range(num_intersections):
+            x = random.uniform(40, 560)
+            y = random.uniform(40, 560)
+            intersection_id = f'N{i}'
+            intersections.append((intersection_id, (x, y)))
+            points.append([x, y])
+            
         # Add intersection nodes
         for intersection_id, pos in intersections:
             self.road_network.add_node(intersection_id, pos=pos)
@@ -190,15 +199,16 @@ class GNNMAPPORouter:
                 congestion_level='LOW',
                 connected_roads=[]
             )
-        
-        # Add road connections (edges)
-        connections = [
-            ('A1', 'A2'), ('A2', 'A3'),
-            ('B1', 'B2'), ('B2', 'B3'),
-            ('C1', 'C2'), ('C2', 'C3'),
-            ('A1', 'B1'), ('A2', 'B2'), ('A3', 'B3'),
-            ('B1', 'C1'), ('B2', 'C2'), ('B3', 'C3')
-        ]
+            
+        # Generate road connections (edges) using Delaunay triangulation for realistic layout
+        tri = Delaunay(points)
+        edges = set()
+        for simplex in tri.simplices:
+            edges.add(tuple(sorted([simplex[0], simplex[1]])))
+            edges.add(tuple(sorted([simplex[1], simplex[2]])))
+            edges.add(tuple(sorted([simplex[2], simplex[0]])))
+            
+        connections = [(f'N{u}', f'N{v}') for u, v in edges]
         
         for start, end in connections:
             distance = math.sqrt(
@@ -388,13 +398,24 @@ class DLOGICSimulation:
         
     def initialize_demo_agents(self):
         """Initialize demo agents for simulation"""
-        demo_agents = [
-            Agent('AGENT_001', (150, 150), 25.0, 85.0, 'delivery', 'moving', [], [], time.time()),
-            Agent('AGENT_002', (350, 250), 30.0, 92.0, 'patrol', 'idle', [], [], time.time()),
-            Agent('AGENT_003', (450, 180), 20.0, 78.0, 'rescue', 'executing', [], [], time.time()),
-            Agent('AGENT_004', (250, 400), 35.0, 88.0, 'transport', 'moving', [], [], time.time()),
-            Agent('AGENT_005', (180, 320), 28.0, 95.0, 'monitor', 'idle', [], [], time.time())
-        ]
+        import random
+        random.seed(42)
+        demo_agents = []
+        tasks = ['delivery', 'patrol', 'rescue', 'transport', 'monitor']
+        statuses = ['moving', 'idle', 'executing']
+        
+        for i in range(1, 21):
+            agent_id = f'AGENT_{i:03d}'
+            x = random.uniform(50, 550)
+            y = random.uniform(50, 550)
+            speed = random.uniform(20, 50)
+            battery = random.uniform(60, 100)
+            task = random.choice(tasks)
+            status = random.choice(statuses)
+            
+            demo_agents.append(
+                Agent(agent_id, (x, y), speed, battery, task, status, [], [], time.time())
+            )
         
         for agent in demo_agents:
             self.spatial_search.add_agent(agent)

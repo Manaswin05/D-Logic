@@ -35,14 +35,14 @@ const createIntersectionIcon = (signalColor) => {
 }
 
 function MapView() {
-  const centerPosition = [18.5074, 73.8077] // Kothrud, Pune
+  const centerPosition = [18.5204, 73.8567] // Pune City Center
   const [simulationData, setSimulationData] = useState(null)
   const [selectedAgent, setSelectedAgent] = useState(null)
 
   const mapSimToLatLng = (x, y) => {
-    // Expanded map simulation space to ~3km x 3km area (tripled from original)
-    const lat = 18.5074 + (y / 600) * 0.03 - 0.015 // Center around Kothrud
-    const lng = 73.8077 + (x / 600) * 0.06 - 0.03
+    // Map simulation space to cover entire Pune city (~25km x 25km area)
+    const lat = 18.5204 + (y / 600) * 0.25 - 0.125
+    const lng = 73.8567 + (x / 600) * 0.25 - 0.125
     return [lat, lng]
   }
 
@@ -97,7 +97,7 @@ function MapView() {
       <div className="map-header">
         <div>
           <h2 className="map-title">D-LOGIC Map View</h2>
-          <p className="map-subtitle">Multi-Agent System Overlay · Kothrud, Pune</p>
+          <p className="map-subtitle">Multi-Agent System Overlay · Pune City</p>
         </div>
         <div className="map-stats">
           <div className="map-stat">
@@ -151,7 +151,7 @@ function MapView() {
           </div>
         </div>
         <div className="map-inner">
-          <MapContainer center={position} zoom={15} style={{ height: '100%', width: '100%' }}>
+          <MapContainer center={position} zoom={12} style={{ height: '100%', width: '100%' }}>
             <TileLayer
               attribution='&copy; <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a> contributors'
               url="https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png"
