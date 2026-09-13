@@ -13,6 +13,10 @@ export default defineConfig({
       '/agent_details': 'http://127.0.0.1:5000',
       '/add_agent': 'http://127.0.0.1:5000',
       '/remove_agent': 'http://127.0.0.1:5000',
+      '/update_agent_position': 'http://127.0.0.1:5000',
+      '/update_intersection_position': 'http://127.0.0.1:5000',
+      '/remove_intersection': 'http://127.0.0.1:5000',
+      '/reset_simulation': 'http://127.0.0.1:5000',
       '/video_feed': 'http://127.0.0.1:5000',
       '/traffic_status': 'http://127.0.0.1:5000',
       '/algorithms_info': 'http://127.0.0.1:5000'

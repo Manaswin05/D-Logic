@@ -37,7 +37,7 @@ function Dashboard() {
         }
       }
       fetchAgentDetails()
-      const interval = setInterval(fetchAgentDetails, 1000)
+      const interval = setInterval(fetchAgentDetails, 3000)
       return () => clearInterval(interval)
     }
   }, [selectedAgent])

@@ -147,20 +147,21 @@ class GNNMAPPORouter:
         import math
         
         # Create a distributed network for simulation
-        random.seed(1337)  # Consistent layout
+        # Create a distributed network in a heptagon shape (7 nodes)
         num_intersections = 7
         intersections = []
-        points = []
+        
+        # Center of simulation area
+        cx, cy = 300, 300
+        radius = 200
         
         for i in range(num_intersections):
-            angle = random.uniform(0, 2 * math.pi)
-            r = math.sqrt(random.uniform(0.1, 1.0)) * 250
-            x = 300 + r * math.cos(angle)
-            y = 300 + (r * 0.8) * math.sin(angle)
+            angle = (i * 2 * math.pi) / num_intersections
+            x = cx + radius * math.cos(angle)
+            y = cy + radius * math.sin(angle)
             
             intersection_id = f'N{i}'
             intersections.append((intersection_id, (x, y)))
-            points.append([x, y])
             
         # Add intersection nodes
         for intersection_id, pos in intersections:
@@ -175,24 +176,13 @@ class GNNMAPPORouter:
                 connected_roads=[]
             )
             
-        # Generate road connections using nearest-neighbor edges (no scipy needed)
+        # Generate ring connections (each connects to 2 neighbors)
         connections = []
-        for i in range(len(points)):
-            # Connect each node to its 2-3 nearest neighbors
-            dists = []
-            for j in range(len(points)):
-                if i == j:
-                    continue
-                d = math.sqrt((points[i][0]-points[j][0])**2 + (points[i][1]-points[j][1])**2)
-                dists.append((d, j))
-            dists.sort()
-            for _, j in dists[:3]:
-                edge = tuple(sorted([i, j]))
-                conn = (f'N{edge[0]}', f'N{edge[1]}')
-                if conn not in connections:
-                    connections.append(conn)
+        for i in range(num_intersections):
+            j = (i + 1) % num_intersections
+            conn = (f'N{i}', f'N{j}')
+            connections.append(conn)
             
-
         
         for start, end in connections:
             distance = math.sqrt(
@@ -487,6 +477,23 @@ class DLOGICSimulation:
                 self.log_event(agent_id, f'MAPPO: Executing reroute to avoid high traffic (priority: {decision["priority"]})', 'alert', agent_id)
             elif decision['action_type'] == 'optimize_speed' and agent.speed < 20 and self.simulation_state['step'] % 10 == 0:
                 self.log_event(agent_id, f'MAPPO: Accelerating in low-traffic zone', 'success', agent_id)
+                
+            # Assign nearby warehouse as target if no target exists
+            if not decision.get('target_position') and agent.route:
+                decision['target_position'] = agent.route[0]
+                
+            if not decision.get('target_position'):
+                closest = None
+                min_d = float('inf')
+                for intersection_id, state in self.mappo_router.traffic_states.items():
+                    d = math.sqrt((agent.position[0] - state.position[0])**2 + (agent.position[1] - state.position[1])**2)
+                    if d > 20 and d < min_d:
+                        min_d = d
+                        closest = state.position
+                if closest:
+                    decision['target_position'] = closest
+                    agent.route = [closest]
+                    agent.status = 'moving'
             
             # Execute decision and calculate reward
             reward = self.execute_agent_decision(agent_id, decision)
@@ -848,6 +855,16 @@ def update_intersection_position():
             dlogic_sim.mappo_router.traffic_states[intersection_id].position = tuple(position)
             if intersection_id in dlogic_sim.mappo_router.road_network.nodes:
                 dlogic_sim.mappo_router.road_network.nodes[intersection_id]['pos'] = tuple(position)
+                
+                # Update edge weights (distances) for connected roads
+                # networkx edges view allows us to iterate connected edges
+                if hasattr(dlogic_sim.mappo_router.road_network, 'edges'):
+                    for u, v, edge_data in list(dlogic_sim.mappo_router.road_network.edges(intersection_id, data=True)):
+                        other_node = v if u == intersection_id else u
+                        other_pos = dlogic_sim.mappo_router.road_network.nodes[other_node]['pos']
+                        new_dist = math.sqrt((position[0] - other_pos[0])**2 + (position[1] - other_pos[1])**2)
+                        dlogic_sim.mappo_router.road_network[u][v]['weight'] = new_dist
+                        
             return jsonify({'status': 'success', 'message': f'{intersection_id} moved'})
     
     return jsonify({'error': 'Intersection not found'}), 404

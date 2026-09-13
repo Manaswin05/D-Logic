@@ -114,7 +114,7 @@ function MapView() {
     }
 
     fetchSimulationData()
-    const interval = setInterval(fetchSimulationData, 1000)
+    const interval = setInterval(fetchSimulationData, 2500)
     return () => clearInterval(interval)
   }, [])
 
