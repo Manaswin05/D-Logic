@@ -1,7 +1,14 @@
 import React, { useState, useEffect, useRef } from 'react'
 import { useNavigate } from 'react-router-dom'
 import axios from 'axios'
+import {
+  LineChart, Line, BarChart, Bar, XAxis, YAxis, CartesianGrid,
+  Tooltip, ResponsiveContainer, Cell, Legend,
+} from 'recharts'
 import './Dashboard.css'
+
+const COLORS = ['#22c55e','#3b82f6','#f59e0b','#8b5cf6','#06b6d4',
+                 '#f97316','#ec4899','#a3e635','#facc15','#34d399']
 
 function Dashboard() {
   const navigate = useNavigate()
@@ -9,6 +16,7 @@ function Dashboard() {
   const [selectedAgent, setSelectedAgent] = useState(null)
   const [agentDetails, setAgentDetails] = useState(null)
   const [simulationRunning, setSimulationRunning] = useState(true)
+  const [perfHistory, setPerfHistory] = useState([])
   const [logs, setLogs] = useState([
     { time: new Date().toLocaleTimeString(), msg: 'D-LOGIC system initialized', type: 'primary' }
   ])
@@ -22,14 +30,27 @@ function Dashboard() {
       try {
         const response = await axios.get('/simulation_data')
         if (isMounted) {
-          setSimulationData(response.data)
+          const data = response.data
+          setSimulationData(data)
           hasData = true;
+
+          // Build performance history for chart
+          setPerfHistory(prev => {
+            const entry = {
+              step: data.simulation_state?.step ?? 0,
+              performance: parseFloat(((data.simulation_state?.system_performance ?? 0) * 100).toFixed(1)),
+              agents: data.simulation_state?.total_agents ?? 0,
+              commEvents: data.simulation_state?.communication_events ?? 0,
+            }
+            const next = [...prev, entry]
+            return next.length > 60 ? next.slice(-60) : next
+          })
+
           timeoutId = setTimeout(fetchSimulationData, 1000)
         }
       } catch (error) {
         console.error('Error fetching simulation data:', error)
         if (isMounted) {
-          // Retry quickly if we are still waiting for initial load
           timeoutId = setTimeout(fetchSimulationData, hasData ? 1000 : 250)
         }
       }
@@ -93,7 +114,6 @@ function Dashboard() {
   const [cmdInput, setCmdInput] = useState('')
   const terminalRef = useRef(null)
 
-  // Scroll terminal to bottom when history changes
   useEffect(() => {
     if (terminalRef.current) {
       terminalRef.current.scrollTop = terminalRef.current.scrollHeight
@@ -148,22 +168,32 @@ function Dashboard() {
 
   const getStatusColor = (status) => {
     switch(status) {
-      case 'moving': return '#f59e0b' // amber
-      case 'executing': return '#8b5cf6' // purple
-      case 'idle': return '#3b82f6' // blue
-      case 'failed': return '#ef4444' // red
+      case 'moving': return '#f59e0b' 
+      case 'executing': return '#8b5cf6' 
+      case 'idle': return '#3b82f6' 
+      case 'failed': return '#ef4444' 
       default: return '#6b7280'
     }
   }
 
   const getSignalColor = (signal) => {
     switch(signal) {
-      case 'green': return '#10b981' // emerald
-      case 'yellow': return '#f59e0b' // amber
-      case 'red': return '#ef4444' // red
+      case 'green': return '#10b981' 
+      case 'yellow': return '#f59e0b' 
+      case 'red': return '#ef4444' 
       default: return '#6b7280'
     }
   }
+
+  const statusDist = {}
+  if (simulationData) {
+    simulationData.agents.forEach(a => {
+      statusDist[a.status] = (statusDist[a.status] || 0) + 1
+    })
+  }
+  const statusChartData = Object.entries(statusDist).map(([status, count]) => ({
+    status: status.charAt(0).toUpperCase() + status.slice(1), count,
+  }))
 
   if (!simulationData) {
     return (
@@ -175,8 +205,7 @@ function Dashboard() {
   }
 
   return (
-    <>
-      {/* Header */}
+    <div style={{ zoom: 0.9, display: 'flex', flexDirection: 'column', flex: 1, height: '100%' }}>
       <div className="dash-header">
         <div>
           <h2 className="dash-title">D-LOGIC Multi-Agent System</h2>
@@ -196,26 +225,22 @@ function Dashboard() {
         </div>
       </div>
 
-      {/* KPI cards */}
       <div className="kpi-grid">
         <div className="data-card kpi-card">
           <span className="kpi-label">Active Agents</span>
           <span className="kpi-value">{simulationData.simulation_state.total_agents}</span>
           <span className="kpi-meta">Autonomous vehicles</span>
         </div>
-
         <div className="data-card kpi-card">
           <span className="kpi-label">Simulation Step</span>
           <span className="kpi-value">{simulationData.simulation_state.step}</span>
           <span className="kpi-meta">Current iteration</span>
         </div>
-
         <div className="data-card kpi-card">
           <span className="kpi-label">System Performance</span>
           <span className="kpi-value">{(simulationData.simulation_state.system_performance * 100).toFixed(1)}%</span>
           <span className="kpi-meta">Average reward score</span>
         </div>
-
         <div className="data-card kpi-card">
           <span className="kpi-label">Communication Events</span>
           <span className="kpi-value">{simulationData.simulation_state.communication_events}</span>
@@ -223,23 +248,22 @@ function Dashboard() {
         </div>
       </div>
 
-      {/* Main grid */}
-      <div className="dash-main">
 
-        {/* Left column — Video Feed */}
+
+      <div className="dash-main">
         <div className="dash-left">
           <div className="data-card cam-panel" style={{ display: 'flex', flexDirection: 'column' }}>
             <div className="cam-header">
               <div className="cam-header-left">
                 <span className="material-symbols-outlined">terminal</span>
-                <span className="cam-header-label">Activity Status</span>
+                <span className="cam-header-label">Command Line</span>
               </div>
               <span className="cam-badge">
                 <span className="pulse-dot" />
                 AWAITING COMMAND
               </span>
             </div>
-            <div className="cam-feed" style={{ display: 'flex', flexDirection: 'column', backgroundColor: '#0a0a0a', padding: '15px', height: '100%', borderTop: '1px solid #222' }}>
+            <div className="cam-feed" style={{ display: 'flex', flexDirection: 'column', backgroundColor: '#0a0a0a', padding: '15px', paddingTop: '60px', paddingBottom: '30px', flex: 1, borderTop: '1px solid #222' }}>
               <div ref={terminalRef} style={{ flex: 1, overflowY: 'auto', fontFamily: 'JetBrains Mono', fontSize: '13px', textAlign: 'left', lineHeight: '1.6' }}>
                 {terminalHistory.map((line, idx) => (
                   <div key={idx} style={{ 
@@ -274,237 +298,11 @@ function Dashboard() {
             </div>
           </div>
 
-          {/* Agent Cards */}
-          <div className="agent-grid">
-            {simulationData.agents.map((agent) => (
-              <div 
-                key={agent.id} 
-                className={`agent-card ${selectedAgent === agent.id ? 'selected' : ''}`}
-                onClick={() => handleAgentClick(agent.id)}
-              >
-                <div className="agent-card-header">
-                  <span className="agent-id">{agent.id}</span>
-                  <span 
-                    className="agent-status-dot" 
-                    style={{ backgroundColor: getStatusColor(agent.status) }}
-                  />
-                </div>
-                <div className="agent-card-body">
-                  <div className="agent-stat">
-                    <span className="agent-stat-label">Task</span>
-                    <span className="agent-stat-value">{agent.task}</span>
-                  </div>
-                  <div className="agent-stat">
-                    <span className="agent-stat-label">Status</span>
-                    <span className="agent-stat-value">{agent.status}</span>
-                  </div>
-                  <div className="agent-stat">
-                    <span className="agent-stat-label">Speed</span>
-                    <span className="agent-stat-value">{agent.speed.toFixed(1)} km/h</span>
-                  </div>
-                  <div className="agent-stat">
-                    <span className="agent-stat-label">Battery</span>
-                    <span className="agent-stat-value">{agent.battery.toFixed(0)}%</span>
-                  </div>
-                  <div className="agent-stat">
-                    <span className="agent-stat-label">Neighbors</span>
-                    <span className="agent-stat-value">{agent.neighbors.length}</span>
-                  </div>
-                  <div className="agent-stat">
-                    <span className="agent-stat-label">Position</span>
-                    <span className="agent-stat-value">
-                      ({agent.position[0].toFixed(0)}, {agent.position[1].toFixed(0)})
-                    </span>
-                  </div>
-                </div>
-                {agent.neighbors.length > 0 && (
-                  <div className="agent-neighbors">
-                    <span className="agent-neighbors-label">Connected to:</span>
-                    <span className="agent-neighbors-list">
-                      {agent.neighbors.join(', ')}
-                    </span>
-                  </div>
-                )}
-              </div>
-            ))}
-          </div>
+
         </div>
 
-        {/* Right column */}
-        <div className="dash-right">
-          
-          {/* Selected Agent Details */}
-          {selectedAgent && agentDetails && (
-            <div className="data-card agent-details-panel">
-              <div className="panel-header">
-                <span className="panel-header-text">Agent Details: {selectedAgent}</span>
-                <button 
-                  className="close-btn" 
-                  onClick={() => setSelectedAgent(null)}
-                >
-                  <span className="material-symbols-outlined">close</span>
-                </button>
-              </div>
-              
-              <div className="agent-details-content">
-                <div className="detail-section">
-                  <h4>Agent State</h4>
-                  <div className="detail-grid">
-                    <div className="detail-item">
-                      <span className="detail-label">ID</span>
-                      <span className="detail-value">{agentDetails.agent.id}</span>
-                    </div>
-                    <div className="detail-item">
-                      <span className="detail-label">Status</span>
-                      <span className="detail-value" style={{ color: getStatusColor(agentDetails.agent.status) }}>
-                        {agentDetails.agent.status}
-                      </span>
-                    </div>
-                    <div className="detail-item">
-                      <span className="detail-label">Task</span>
-                      <span className="detail-value">{agentDetails.agent.task}</span>
-                    </div>
-                    <div className="detail-item">
-                      <span className="detail-label">Speed</span>
-                      <span className="detail-value">{agentDetails.agent.speed.toFixed(2)} km/h</span>
-                    </div>
-                    <div className="detail-item">
-                      <span className="detail-label">Battery</span>
-                      <span className="detail-value">{agentDetails.agent.battery.toFixed(1)}%</span>
-                    </div>
-                    <div className="detail-item">
-                      <span className="detail-label">Position</span>
-                      <span className="detail-value">
-                        ({agentDetails.agent.position[0].toFixed(1)}, {agentDetails.agent.position[1].toFixed(1)})
-                      </span>
-                    </div>
-                  </div>
-                </div>
-
-                <div className="detail-section">
-                  <h4>Neighborhood Info (KD-Tree)</h4>
-                  <div className="detail-grid">
-                    <div className="detail-item">
-                      <span className="detail-label">Neighbor Count</span>
-                      <span className="detail-value">{agentDetails.neighborhood_info.neighbor_count}</span>
-                    </div>
-                    <div className="detail-item">
-                      <span className="detail-label">Local Density</span>
-                      <span className="detail-value">{(agentDetails.neighborhood_info.local_density * 1000).toFixed(3)}</span>
-                    </div>
-                    <div className="detail-item">
-                      <span className="detail-label">Avg Speed</span>
-                      <span className="detail-value">{agentDetails.neighborhood_info.avg_speed.toFixed(2)} km/h</span>
-                    </div>
-                    <div className="detail-item">
-                      <span className="detail-label">Congestion</span>
-                      <span className="detail-value">{(agentDetails.neighborhood_info.congestion_metric * 100).toFixed(1)}%</span>
-                    </div>
-                  </div>
-                </div>
-
-                <div className="detail-section">
-                  <h4>Local Graph (GNN)</h4>
-                  <div className="graph-info">
-                    <div className="graph-stat">
-                      <span className="graph-stat-label">Nodes</span>
-                      <span className="graph-stat-value">{agentDetails.local_graph.nodes.length}</span>
-                    </div>
-                    <div className="graph-stat">
-                      <span className="graph-stat-label">Edges</span>
-                      <span className="graph-stat-value">{agentDetails.local_graph.edges.length}</span>
-                    </div>
-                  </div>
-                  
-                  {agentDetails.local_graph.nodes.length > 0 && (
-                    <div className="graph-nodes-list">
-                      {agentDetails.local_graph.nodes.slice(0, 5).map((node, idx) => (
-                        <div key={idx} className="graph-node-item">
-                          <span className="node-type">{node.type}</span>
-                          <span className="node-id">{node.id}</span>
-                        </div>
-                      ))}
-                    </div>
-                  )}
-                </div>
-
-                {agentDetails.policy && (
-                  <div className="detail-section">
-                    <h4>MAPPO Policy</h4>
-                    <div className="detail-grid">
-                      <div className="detail-item">
-                        <span className="detail-label">Exploration Rate</span>
-                        <span className="detail-value">
-                          {(agentDetails.policy.exploration_rate * 100).toFixed(1)}%
-                        </span>
-                      </div>
-                      <div className="detail-item">
-                        <span className="detail-label">Avg Reward</span>
-                        <span className="detail-value">
-                          {(agentDetails.policy.average_reward * 100).toFixed(1)}%
-                        </span>
-                      </div>
-                    </div>
-                  </div>
-                )}
-              </div>
-            </div>
-          )}
-
-          {/* Traffic Intersections */}
-          <div className="data-card intersections-panel">
-            <div className="panel-header">
-              <span className="panel-header-text">Traffic Intersections</span>
-              <span className="panel-count">{simulationData.intersections.length} nodes</span>
-            </div>
-            
-            <div className="intersections-grid">
-              {simulationData.intersections.map((intersection) => (
-                <div key={intersection.intersection_id} className="intersection-card">
-                  <div className="intersection-header">
-                    <span className="intersection-id">{intersection.intersection_id}</span>
-                    <span 
-                      className="signal-light" 
-                      style={{ backgroundColor: getSignalColor(intersection.signal) }}
-                    />
-                  </div>
-                  <div className="intersection-stats">
-                    <div className="intersection-stat">
-                      <span className="stat-label">Vehicles</span>
-                      <span className="stat-value">{intersection.vehicle_count}</span>
-                    </div>
-                    <div className="intersection-stat">
-                      <span className="stat-label">Congestion</span>
-                      <span className={`stat-value congestion-${intersection.congestion_level.toLowerCase()}`}>
-                        {intersection.congestion_level}
-                      </span>
-                    </div>
-                  </div>
-                </div>
-              ))}
-            </div>
-          </div>
-
-          {/* System Logs */}
-          <div className="data-card logs-panel">
-            <div className="panel-header">
-              <span className="panel-header-text">System Logs</span>
-              <span className="panel-count">Last {logs.length} entries</span>
-            </div>
-            <div className="logs-list">
-              {logs.map((entry, i) => (
-                <div key={i} className={`log-entry${i > 0 ? ' dim' : ''}`}>
-                  <span className="log-time">{entry.time}</span>
-                  <span className={`log-msg${entry.type === 'error' ? ' error' : entry.type === 'primary' ? ' primary' : ''}`}>
-                    {entry.msg}
-                  </span>
-                </div>
-              ))}
-            </div>
-          </div>
-        </div>
       </div>
-    </>
+    </div>
   )
 }
 

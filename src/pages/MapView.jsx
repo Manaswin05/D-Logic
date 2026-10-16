@@ -433,27 +433,43 @@ function MapView() {
       {/* Selected Agent or System Info Panel */}
       {(isBottomBarOpen || selectedAgent) && (
         <div className="map-agent-info" style={{ maxHeight: '40vh', overflowY: 'auto', paddingTop: '12px' }}>
-          {/* Universal Collapse Handle */}
-          <div style={{display: 'flex', justifyContent: 'center', marginBottom: '8px'}}>
-            <button 
-              style={{
-                background: 'rgba(255, 255, 255, 0.1)', 
-                border: 'none', 
-                borderRadius: '50%', 
-                width: '32px', 
-                height: '32px', 
-                display: 'flex', 
-                alignItems: 'center', 
-                justifyContent: 'center',
-                cursor: 'pointer',
-                color: 'var(--t-variant)'
-              }}
+          {/* Universal Collapse Handle + Close Button */}
+          <div style={{ position: 'relative', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
+            <div 
+              className="bs-drag-handle"
+              style={{ cursor: 'pointer' }}
               onClick={() => {
                 setIsBottomBarOpen(false);
                 if (selectedAgent) setSelectedAgent(null);
               }}
+            />
+            <button
+              onClick={() => {
+                setIsBottomBarOpen(false);
+                setSelectedAgent(null);
+              }}
+              style={{
+                position: 'absolute',
+                right: '12px',
+                top: '50%',
+                transform: 'translateY(-50%)',
+                background: 'rgba(255,255,255,0.08)',
+                border: '1px solid rgba(255,255,255,0.15)',
+                borderRadius: '50%',
+                width: '28px',
+                height: '28px',
+                display: 'flex',
+                alignItems: 'center',
+                justifyContent: 'center',
+                cursor: 'pointer',
+                color: 'var(--t-primary)',
+                transition: 'background 0.2s',
+              }}
+              onMouseEnter={e => e.currentTarget.style.background = 'rgba(239,68,68,0.18)'}
+              onMouseLeave={e => e.currentTarget.style.background = 'rgba(255,255,255,0.08)'}
+              title="Collapse"
             >
-              <span className="material-symbols-outlined">keyboard_arrow_down</span>
+              <span className="material-symbols-outlined" style={{ fontSize: '16px', lineHeight: 1 }}>close</span>
             </button>
           </div>
         {selectedAgent ? (

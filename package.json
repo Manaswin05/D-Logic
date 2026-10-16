@@ -1,5 +1,6 @@
 {
-  "name": "ai-traffic-control-react",
+  "name": "Decentralised logistics Flee",
+  "author": "Manaswin Sripatnala",
   "version": "1.0.0",
   "private": true,
   "dependencies": {
@@ -12,6 +13,7 @@
     "react-dom": "^18.2.0",
     "react-leaflet": "^4.2.1",
     "react-router-dom": "^6.20.0",
+    "recharts": "^3.10.1",
     "three": "^0.183.2"
   },
   "devDependencies": {
