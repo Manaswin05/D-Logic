@@ -5,16 +5,409 @@ import os
 import json
 import random
 import math
+import hashlib
+import hmac
 import threading
 from collections import deque, defaultdict
-from dataclasses import dataclass, asdict
+from dataclasses import dataclass, field, asdict
 from typing import List, Dict, Tuple, Optional
 import networkx as nx
+import torch
+import torch.nn as nn
+import torch.nn.functional as F
+import torch.optim as optim
+from torch.distributions import Categorical
+from scipy.spatial import KDTree as ScipyKDTree
+import numpy as np
 
-# Serve React build in production
+# ── ECC imports (SECP256K1 via cryptography library) ──────────────────────────
+from cryptography.hazmat.primitives.asymmetric.ec import (
+    generate_private_key, SECP256K1, ECDH,
+    EllipticCurvePublicKey
+)
+from cryptography.hazmat.primitives import hashes, serialization
+from cryptography.hazmat.primitives.asymmetric import ec
+from cryptography.hazmat.primitives.kdf.hkdf import HKDF
+from cryptography.hazmat.primitives.ciphers.aead import AESGCM
+from cryptography.hazmat.backends import default_backend
+
+# ── Serve React build in production ───────────────────────────────────────────
 STATIC_FOLDER = os.path.join(os.path.dirname(__file__), 'dist')
 app = Flask(__name__, static_folder=STATIC_FOLDER, static_url_path='')
 CORS(app)
+
+# =============================================================================
+# ECC P2P SECURE COMMUNICATION LAYER
+# =============================================================================
+# Each agent owns an ECC key pair on SECP256K1.
+# When two agents come within communication range they perform an in-memory
+# ECDH handshake → derive a 256-bit AES-GCM shared secret via HKDF-SHA256.
+# All subsequent telemetry exchanges are:
+#   1. Signed  with the sender's EC private key (ECDSA / SHA-256)
+#   2. Encrypted with the per-pair AES-GCM key
+#   3. Verified on receipt
+# The shared secret is cached so the handshake only runs once per pair.
+# =============================================================================
+
+class AgentECCIdentity:
+    """ECC identity for one agent: key pair + ECDH session cache."""
+
+    CURVE = SECP256K1()
+
+    def __init__(self, agent_id: str):
+        self.agent_id = agent_id
+        self._private_key = generate_private_key(self.CURVE, default_backend())
+        self.public_key: EllipticCurvePublicKey = self._private_key.public_key()
+        # peer_id -> AES-GCM key (bytes)
+        self._session_keys: Dict[str, bytes] = {}
+
+    # ── Public key serialisation (sent over the simulated channel) ────────────
+    def public_key_bytes(self) -> bytes:
+        """Uncompressed SEC1 public key bytes (65 bytes on SECP256K1)."""
+        return self.public_key.public_bytes(
+            serialization.Encoding.X962,
+            serialization.PublicFormat.UncompressedPoint
+        )
+
+    @staticmethod
+    def public_key_from_bytes(raw: bytes) -> EllipticCurvePublicKey:
+        return ec.EllipticCurvePublicKey.from_encoded_point(SECP256K1(), raw)
+
+    # ── ECDH handshake ────────────────────────────────────────────────────────
+    def derive_shared_secret(self, peer_id: str, peer_pub_bytes: bytes) -> bytes:
+        """ECDH + HKDF → 32-byte AES key. Cached after first call."""
+        if peer_id in self._session_keys:
+            return self._session_keys[peer_id]
+
+        peer_pub = ec.EllipticCurvePublicKey.from_encoded_point(SECP256K1(), peer_pub_bytes)
+        raw_secret = self._private_key.exchange(ECDH(), peer_pub)
+
+        # HKDF-SHA256 to stretch to a proper AES-256 key
+        aes_key = HKDF(
+            algorithm=hashes.SHA256(),
+            length=32,
+            salt=None,
+            info=f"{self.agent_id}:{peer_id}".encode(),
+            backend=default_backend()
+        ).derive(raw_secret)
+
+        self._session_keys[peer_id] = aes_key
+        return aes_key
+
+    def invalidate_session(self, peer_id: str):
+        """Drop cached session key when agents leave comm range."""
+        self._session_keys.pop(peer_id, None)
+
+    # ── Sign ──────────────────────────────────────────────────────────────────
+    def sign(self, payload: bytes) -> bytes:
+        """ECDSA-SHA256 signature over payload."""
+        return self._private_key.sign(payload, ec.ECDSA(hashes.SHA256()))
+
+    # ── Verify ────────────────────────────────────────────────────────────────
+    @staticmethod
+    def verify(public_key: EllipticCurvePublicKey, payload: bytes, signature: bytes) -> bool:
+        try:
+            public_key.verify(signature, payload, ec.ECDSA(hashes.SHA256()))
+            return True
+        except Exception:
+            return False
+
+
+class P2PSecureChannel:
+    """
+    Simulated P2P channel between two agents using ECC.
+
+    Flow per message:
+      sender  → sign(payload) → encrypt(payload, aes_key) → wire
+      receiver → decrypt(ciphertext, aes_key) → verify(signature) → accept/reject
+    """
+
+    def __init__(self):
+        # agent_id -> AgentECCIdentity
+        self._identities: Dict[str, AgentECCIdentity] = {}
+        # (sender_id, receiver_id) -> list of recent verified messages (capped at 20)
+        self._message_log: Dict[Tuple[str, str], deque] = defaultdict(lambda: deque(maxlen=20))
+        # Total stats
+        self.total_handshakes = 0
+        self.total_messages = 0
+        self.total_verified = 0
+        self.total_failed = 0
+
+    # ── Identity management ───────────────────────────────────────────────────
+    def register_agent(self, agent_id: str) -> AgentECCIdentity:
+        if agent_id not in self._identities:
+            self._identities[agent_id] = AgentECCIdentity(agent_id)
+        return self._identities[agent_id]
+
+    def deregister_agent(self, agent_id: str):
+        self._identities.pop(agent_id, None)
+
+    def get_public_key_hex(self, agent_id: str) -> Optional[str]:
+        """Return hex-encoded public key for UI display."""
+        if agent_id in self._identities:
+            return self._identities[agent_id].public_key_bytes().hex()
+        return None
+
+    # ── Handshake ─────────────────────────────────────────────────────────────
+    def handshake(self, agent_a: str, agent_b: str) -> bool:
+        """
+        Mutual ECDH handshake between two agents.
+        Both agents derive the same shared AES key (ECDH property).
+        Returns True if handshake succeeded.
+        """
+        if agent_a not in self._identities or agent_b not in self._identities:
+            return False
+
+        id_a = self._identities[agent_a]
+        id_b = self._identities[agent_b]
+
+        # Each side derives the shared key using the other's public key bytes
+        id_a.derive_shared_secret(agent_b, id_b.public_key_bytes())
+        id_b.derive_shared_secret(agent_a, id_a.public_key_bytes())
+
+        self.total_handshakes += 1
+        return True
+
+    # ── Send ──────────────────────────────────────────────────────────────────
+    def send_message(self, sender_id: str, receiver_id: str, payload: dict) -> Optional[dict]:
+        """
+        Encrypt + sign a telemetry payload from sender to receiver.
+        Returns the wire-format envelope (for logging/display).
+        """
+        if sender_id not in self._identities or receiver_id not in self._identities:
+            return None
+
+        id_sender = self._identities[sender_id]
+
+        # Ensure session key exists (auto-handshake if needed)
+        if receiver_id not in id_sender._session_keys:
+            self.handshake(sender_id, receiver_id)
+
+        aes_key = id_sender._session_keys[receiver_id]
+        raw_payload = json.dumps(payload).encode()
+
+        # Sign BEFORE encrypting so the receiver can verify after decrypt
+        signature = id_sender.sign(raw_payload)
+
+        # AES-256-GCM encrypt: nonce is 12 random bytes
+        nonce = os.urandom(12)
+        aesgcm = AESGCM(aes_key)
+        ciphertext = aesgcm.encrypt(nonce, raw_payload, None)
+
+        envelope = {
+            'from': sender_id,
+            'to': receiver_id,
+            'nonce': nonce.hex(),
+            'ciphertext': ciphertext.hex(),
+            'signature': signature.hex(),
+            'pubkey': id_sender.public_key_bytes().hex(),
+            'ts': time.time()
+        }
+
+        self.total_messages += 1
+        return envelope
+
+    # ── Receive ───────────────────────────────────────────────────────────────
+    def receive_message(self, receiver_id: str, envelope: dict) -> Optional[dict]:
+        """
+        Decrypt + verify an envelope. Returns the plaintext payload dict,
+        or None if tampered / verification fails.
+        """
+        if receiver_id not in self._identities:
+            return None
+
+        id_receiver = self._identities[receiver_id]
+        sender_id = envelope['from']
+
+        # Ensure session key exists
+        if sender_id not in id_receiver._session_keys:
+            sender_pub_bytes = bytes.fromhex(envelope['pubkey'])
+            id_receiver.derive_shared_secret(sender_id, sender_pub_bytes)
+
+        aes_key = id_receiver._session_keys[sender_id]
+
+        try:
+            nonce = bytes.fromhex(envelope['nonce'])
+            ciphertext = bytes.fromhex(envelope['ciphertext'])
+            aesgcm = AESGCM(aes_key)
+            raw_payload = aesgcm.decrypt(nonce, ciphertext, None)
+        except Exception:
+            self.total_failed += 1
+            return None
+
+        # Verify signature using sender's public key from the envelope
+        sender_pub = ec.EllipticCurvePublicKey.from_encoded_point(
+            SECP256K1(), bytes.fromhex(envelope['pubkey'])
+        )
+        if not AgentECCIdentity.verify(sender_pub, raw_payload, bytes.fromhex(envelope['signature'])):
+            self.total_failed += 1
+            return None
+
+        payload = json.loads(raw_payload)
+        self.total_verified += 1
+        self._message_log[(sender_id, receiver_id)].append({
+            'payload': payload,
+            'ts': envelope['ts']
+        })
+        return payload
+
+    # ── Convenience: simulate one secure telemetry exchange ───────────────────
+    def exchange_telemetry(self, sender_id: str, receiver_id: str,
+                           agent_state: dict) -> dict:
+        """
+        High-level helper: pack agent state, send, receive, verify.
+        Returns a result dict with verification status and decrypted data.
+        """
+        envelope = self.send_message(sender_id, receiver_id, agent_state)
+        if envelope is None:
+            return {'verified': False, 'reason': 'identities_missing'}
+
+        decrypted = self.receive_message(receiver_id, envelope)
+        if decrypted is None:
+            return {'verified': False, 'reason': 'decryption_or_sig_failed'}
+
+        return {
+            'verified': True,
+            'from': sender_id,
+            'to': receiver_id,
+            'data': decrypted,
+            'pubkey_from': envelope['pubkey'][:16] + '…'   # truncated for display
+        }
+
+    def get_stats(self) -> dict:
+        return {
+            'total_handshakes': self.total_handshakes,
+            'total_messages': self.total_messages,
+            'total_verified': self.total_verified,
+            'total_failed': self.total_failed,
+            'registered_agents': list(self._identities.keys())
+        }
+
+
+# Global P2P channel instance (shared across the simulation)
+p2p_channel = P2PSecureChannel()
+
+# =============================================================================
+# BLOCKCHAIN AUDIT LEDGER
+# =============================================================================
+# Immutable event ledger using SHA-256 hash chains.
+# Each significant simulation event (agent failure, task reallocation, routing
+# decision) is recorded as a block with: timestamp, event data, prev_hash, nonce.
+# Provides tamper-evident audit trail for research reproducibility.
+# =============================================================================
+
+class Block:
+    """Single block in the blockchain."""
+    
+    def __init__(self, index: int, timestamp: float, data: dict, previous_hash: str):
+        self.index = index
+        self.timestamp = timestamp
+        self.data = data
+        self.previous_hash = previous_hash
+        self.nonce = 0
+        self.hash = self.calculate_hash()
+    
+    def calculate_hash(self) -> str:
+        """SHA-256 hash of block contents."""
+        block_string = json.dumps({
+            'index': self.index,
+            'timestamp': self.timestamp,
+            'data': self.data,
+            'previous_hash': self.previous_hash,
+            'nonce': self.nonce
+        }, sort_keys=True)
+        return hashlib.sha256(block_string.encode()).hexdigest()
+    
+    def mine_block(self, difficulty: int = 2):
+        """Proof-of-work: find nonce such that hash starts with 'difficulty' zeros."""
+        target = '0' * difficulty
+        while self.hash[:difficulty] != target:
+            self.nonce += 1
+            self.hash = self.calculate_hash()
+    
+    def to_dict(self) -> dict:
+        return {
+            'index': self.index,
+            'timestamp': self.timestamp,
+            'data': self.data,
+            'previous_hash': self.previous_hash,
+            'nonce': self.nonce,
+            'hash': self.hash
+        }
+
+
+class Blockchain:
+    """Immutable blockchain ledger for simulation events."""
+    
+    def __init__(self, difficulty: int = 2):
+        self.chain: List[Block] = []
+        self.difficulty = difficulty
+        self.pending_transactions: List[dict] = []
+        # Create genesis block
+        self._create_genesis_block()
+    
+    def _create_genesis_block(self):
+        """Initialize blockchain with genesis block."""
+        genesis = Block(0, time.time(), {
+            'event': 'GENESIS',
+            'message': 'D-LOGIC Blockchain Initialized',
+            'version': '1.0'
+        }, '0')
+        genesis.mine_block(self.difficulty)
+        self.chain.append(genesis)
+    
+    def get_latest_block(self) -> Block:
+        return self.chain[-1]
+    
+    def add_block(self, data: dict):
+        """Add a new block with mining (proof-of-work)."""
+        latest = self.get_latest_block()
+        new_block = Block(
+            index=len(self.chain),
+            timestamp=time.time(),
+            data=data,
+            previous_hash=latest.hash
+        )
+        new_block.mine_block(self.difficulty)
+        self.chain.append(new_block)
+    
+    def is_chain_valid(self) -> bool:
+        """Verify blockchain integrity."""
+        for i in range(1, len(self.chain)):
+            current = self.chain[i]
+            previous = self.chain[i - 1]
+            
+            # Verify hash
+            if current.hash != current.calculate_hash():
+                return False
+            
+            # Verify chain link
+            if current.previous_hash != previous.hash:
+                return False
+            
+            # Verify proof-of-work
+            if not current.hash.startswith('0' * self.difficulty):
+                return False
+        
+        return True
+    
+    def get_chain_summary(self) -> dict:
+        """Summary stats for the blockchain."""
+        return {
+            'length': len(self.chain),
+            'latest_hash': self.get_latest_block().hash,
+            'is_valid': self.is_chain_valid(),
+            'difficulty': self.difficulty,
+            'total_events': sum(1 for b in self.chain if b.index > 0)
+        }
+    
+    def get_recent_blocks(self, count: int = 10) -> List[dict]:
+        """Get most recent blocks."""
+        return [b.to_dict() for b in self.chain[-count:]]
+
+
+# Global blockchain instance
+blockchain = Blockchain(difficulty=2)
 
 # ============================================
 # D-LOGIC: Decentralized Multi-Agent System
@@ -48,88 +441,121 @@ class TrafficState:
     connected_roads: List[str]
 
 class KDTreeSpatialSearch:
-    """Algorithm 1: Spatial Range Search for Agent Neighbor Discovery"""
-    
+    """Algorithm 1: Spatial Range Search using scipy.spatial.KDTree (O(n log n))"""
+
     def __init__(self):
-        self.agents = {}  # id -> Agent
-        self.communication_radius = 100.0  # meters
-        
+        self.agents: Dict[str, Agent] = {}
+        self.communication_radius = 100.0
+        # Internal scipy KD-Tree + ordered id list; rebuilt on every position change
+        self._kd_tree: Optional[ScipyKDTree] = None
+        self._kd_ids: List[str] = []   # index i → agent_id
+
+    # ── Index management ─────────────────────────────────────────────────────
     def add_agent(self, agent: Agent):
-        """Add agent to the spatial index"""
         self.agents[agent.id] = agent
-        
+        self.rebuild_spatial_index()
+
     def remove_agent(self, agent_id: str):
-        """Remove agent from the spatial index"""
         if agent_id in self.agents:
             del self.agents[agent_id]
-    
+            self.rebuild_spatial_index()
+
     def rebuild_spatial_index(self):
-        """No-op: neighbor search is done on-the-fly to save memory"""
-        pass
-    
+        """Rebuild the KD-Tree from current agent positions."""
+        if not self.agents:
+            self._kd_tree = None
+            self._kd_ids = []
+            return
+        self._kd_ids = list(self.agents.keys())
+        positions = np.array([self.agents[aid].position for aid in self._kd_ids])
+        self._kd_tree = ScipyKDTree(positions)
+
+    # ── Neighbor query ────────────────────────────────────────────────────────
     def find_neighbors(self, agent_id: str) -> List[str]:
-        """Find neighboring agents within communication radius using simple distance check"""
-        if agent_id not in self.agents:
+        """O(log n) range query via scipy KD-Tree."""
+        if agent_id not in self.agents or self._kd_tree is None:
             return []
-            
-        agent = self.agents[agent_id]
-        r2 = self.communication_radius ** 2
-        neighbors = []
-        
-        for other_id, other in self.agents.items():
-            if other_id == agent_id:
-                continue
-            dx = agent.position[0] - other.position[0]
-            dy = agent.position[1] - other.position[1]
-            if dx*dx + dy*dy <= r2:
-                neighbors.append(other_id)
-                
-        return neighbors
-    
+        pos = np.array(self.agents[agent_id].position)
+        # query_ball_point returns indices of all points within radius
+        indices = self._kd_tree.query_ball_point(pos, self.communication_radius)
+        return [self._kd_ids[i] for i in indices if self._kd_ids[i] != agent_id]
+
     def update_agent_neighbors(self):
-        """Update neighbor lists for all agents"""
+        """Rebuild KD-Tree once then batch-query all agents."""
+        self.rebuild_spatial_index()
         for agent_id in self.agents:
-            neighbors = self.find_neighbors(agent_id)
-            self.agents[agent_id].neighbors = neighbors
-    
+            self.agents[agent_id].neighbors = self.find_neighbors(agent_id)
+
     def get_local_neighborhood_info(self, agent_id: str) -> Dict:
-        """Get local neighborhood information for decision making"""
         if agent_id not in self.agents:
             return {}
-            
         agent = self.agents[agent_id]
         neighbors = self.find_neighbors(agent_id)
-        
+
         neighborhood_info = {
             'agent_id': agent_id,
             'position': agent.position,
             'neighbor_count': len(neighbors),
             'neighbors': [],
             'local_density': len(neighbors) / (math.pi * self.communication_radius ** 2),
-            'avg_speed': 0,
-            'congestion_metric': 0
+            'avg_speed': 0.0,
+            'congestion_metric': 0.0
         }
-        
+
         if neighbors:
             speeds = []
             for neighbor_id in neighbors:
                 neighbor = self.agents[neighbor_id]
+                dist = math.sqrt(
+                    (agent.position[0] - neighbor.position[0]) ** 2 +
+                    (agent.position[1] - neighbor.position[1]) ** 2
+                )
                 neighborhood_info['neighbors'].append({
                     'id': neighbor_id,
                     'position': neighbor.position,
                     'speed': neighbor.speed,
                     'status': neighbor.status,
-                    'distance': math.sqrt(
-                        (agent.position[0] - neighbor.position[0]) ** 2 +
-                        (agent.position[1] - neighbor.position[1]) ** 2
-                    )
+                    'distance': dist
                 })
                 speeds.append(neighbor.speed)
-            
             neighborhood_info['avg_speed'] = sum(speeds) / len(speeds)
-            neighborhood_info['congestion_metric'] = max(0, (len(neighbors) - 3) / 10)  # Normalized congestion
-        
+            neighborhood_info['congestion_metric'] = max(0.0, (len(neighbors) - 3) / 10.0)
+
         return neighborhood_info
+
+class SimpleGNN(nn.Module):
+    def __init__(self, in_features, out_features):
+        super().__init__()
+        self.linear = nn.Linear(in_features, out_features)
+        
+    def forward(self, node_features, adj_matrix):
+        aggregated = torch.matmul(adj_matrix, node_features)
+        out = self.linear(aggregated)
+        return F.relu(out)
+
+class MAPPONetwork(nn.Module):
+    def __init__(self, node_dim=3, hidden_dim=32, num_actions=3):
+        super().__init__()
+        self.gnn = SimpleGNN(node_dim, hidden_dim)
+        
+        self.actor = nn.Sequential(
+            nn.Linear(hidden_dim, hidden_dim),
+            nn.ReLU(),
+            nn.Linear(hidden_dim, num_actions)
+        )
+        
+        self.critic = nn.Sequential(
+            nn.Linear(hidden_dim, hidden_dim),
+            nn.ReLU(),
+            nn.Linear(hidden_dim, 1)
+        )
+        
+    def forward(self, node_features, adj_matrix):
+        x = self.gnn(node_features, adj_matrix)
+        agent_repr = x[0] 
+        action_logits = self.actor(agent_repr)
+        value = self.critic(agent_repr)
+        return action_logits, value
 
 class GNNMAPPORouter:
     """Algorithm 2: GNN-Coupled MAPPO for Decentralized Routing"""
@@ -137,9 +563,24 @@ class GNNMAPPORouter:
     def __init__(self):
         self.road_network = nx.Graph()
         self.traffic_states = {}  # intersection_id -> TrafficState
-        self.agent_policies = {}  # agent_id -> policy parameters
         self.global_reward_history = deque(maxlen=1000)
-        self.learning_rate = 0.01
+        
+        # ── GPU/CPU device selection ──────────────────────────────────────────
+        self.device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
+        print(f"[GNN-MAPPO] Using device: {self.device}")
+        if torch.cuda.is_available():
+            print(f"[GNN-MAPPO] GPU: {torch.cuda.get_device_name(0)}")
+            print(f"[GNN-MAPPO] GPU Memory: {torch.cuda.get_device_properties(0).total_memory / 1e9:.2f} GB")
+        
+        # Centralized PyTorch MAPPO Model (moved to GPU if available)
+        self.policy_net = MAPPONetwork(node_dim=3, hidden_dim=32, num_actions=3).to(self.device)
+        self.optimizer = optim.Adam(self.policy_net.parameters(), lr=0.001)
+        self.gamma = 0.99
+        self.clip_ratio = 0.2
+        
+        # Experience buffer for all agents
+        self.memory = []
+        self.agent_policies = {}  # agent_id -> policy parameters
         
     def initialize_road_network(self):
         """Initialize road network topology"""
@@ -277,41 +718,66 @@ class GNNMAPPORouter:
     
     def mappo_policy_decision(self, agent_id: str, local_graph: Dict) -> Dict:
         """MAPPO policy for routing and task allocation decisions"""
-        # Simplified MAPPO decision logic
-        # In real implementation, this would use neural network policies
+        node_features = local_graph.get('node_features', [])
+        
+        if not node_features:
+            return {
+                'action_type': 'maintain_course',
+                'target_position': None,
+                'route': [],
+                'priority': 1.0,
+                'confidence': 1.0
+            }
+            
+        padded_features = []
+        for f in node_features:
+            arr = list(f)
+            while len(arr) < 3:
+                arr.append(0.0)
+            padded_features.append(arr[:3])
+            
+        x = torch.tensor(padded_features, dtype=torch.float32).to(self.device)
+        n_nodes = x.size(0)
+        
+        adj = torch.eye(n_nodes).to(self.device)
+        node_ids = [n['id'] for n in local_graph['nodes']]
+        node_idx = {n_id: i for i, n_id in enumerate(node_ids)}
+        
+        for edge in local_graph.get('edges', []):
+            if edge['source'] in node_idx and edge['target'] in node_idx:
+                s_idx = node_idx[edge['source']]
+                t_idx = node_idx[edge['target']]
+                weight = edge['features'][1] if len(edge['features']) > 1 else 1.0
+                adj[s_idx, t_idx] = weight
+                adj[t_idx, s_idx] = weight
+                
+        action_logits, value = self.policy_net(x, adj)
+        dist = Categorical(logits=action_logits)
+        
+        action_idx = dist.sample()
+        log_prob = dist.log_prob(action_idx)
+        
+        actions = ['maintain_course', 'reroute', 'optimize_speed']
+        chosen_action = actions[action_idx.item()]
         
         decision = {
-            'action_type': 'move',
+            'action_type': chosen_action,
             'target_position': None,
             'route': [],
             'priority': 1.0,
-            'confidence': 0.8
+            'confidence': float(torch.exp(log_prob).item()),
+            '_tensor_state': (x, adj),
+            '_action_idx': action_idx,
+            '_log_prob': log_prob,
+            '_value': value
         }
         
-        # Analyze local graph for decision making
-        node_features = local_graph.get('node_features', [])
-        
-        if len(node_features) > 1:
-            # Calculate average congestion in neighborhood
-            first_features = [f[0] for f in node_features if len(f) > 0]
-            avg_congestion = sum(first_features) / len(first_features) if first_features else 0
+        if chosen_action == 'reroute':
+            decision['priority'] = 2.0
+            decision['target_position'] = self.find_least_congested_intersection()
+        elif chosen_action == 'optimize_speed':
+            decision['priority'] = 1.5
             
-            # Decision logic based on congestion
-            if avg_congestion > 0.7:  # High congestion
-                decision['action_type'] = 'reroute'
-                decision['priority'] = 2.0
-                # Find alternative path
-                target_intersection = self.find_least_congested_intersection()
-                decision['target_position'] = target_intersection
-                
-            elif avg_congestion < 0.3:  # Low congestion
-                decision['action_type'] = 'optimize_speed'
-                decision['priority'] = 1.5
-                
-            else:  # Medium congestion
-                decision['action_type'] = 'maintain_course'
-                decision['priority'] = 1.0
-        
         return decision
     
     def find_least_congested_intersection(self) -> Tuple[float, float]:
@@ -328,8 +794,34 @@ class GNNMAPPORouter:
                 
         return best_intersection
     
-    def update_policy_with_reward(self, agent_id: str, reward: float):
+    def update_policy_with_reward(self, agent_id: str, reward: float, decision: Dict = None):
         """Update agent policy based on reward feedback"""
+        if decision and '_tensor_state' in decision:
+            self.memory.append({
+                'log_prob': decision['_log_prob'],
+                'value': decision['_value'],
+                'reward': reward
+            })
+            
+        if len(self.memory) >= 32:
+            self.optimizer.zero_grad()
+            policy_loss = 0
+            value_loss = 0
+            
+            for experience in self.memory:
+                log_prob = experience['log_prob']
+                value = experience['value']
+                r = experience['reward']
+                
+                advantage = r - value.item()
+                policy_loss -= log_prob * advantage
+                value_loss += F.mse_loss(value, torch.tensor([r], dtype=torch.float32).to(self.device))
+                
+            loss = (policy_loss + 0.5 * value_loss) / len(self.memory)
+            loss.backward()
+            self.optimizer.step()
+            self.memory.clear()
+
         if agent_id not in self.agent_policies:
             self.agent_policies[agent_id] = {
                 'exploration_rate': 0.1,
@@ -345,9 +837,9 @@ class GNNMAPPORouter:
             
         # Adjust exploration rate based on performance
         if policy['average_reward'] > 0.7:
-            policy['exploration_rate'] = max(0.05, policy['exploration_rate'] * 0.95)  # Reduce exploration
+            policy['exploration_rate'] = max(0.05, policy['exploration_rate'] * 0.95)
         else:
-            policy['exploration_rate'] = min(0.3, policy['exploration_rate'] * 1.05)   # Increase exploration
+            policy['exploration_rate'] = min(0.3, policy['exploration_rate'] * 1.05)
         
         self.global_reward_history.append(reward)
 
@@ -400,22 +892,37 @@ class DLOGICSimulation:
         
         for agent in demo_agents:
             self.spatial_search.add_agent(agent)
+            # Register ECC identity for every agent
+            p2p_channel.register_agent(agent.id)
             self.log_event('SYSTEM', f'Agent {agent.id} initialized - Task: {agent.task}', 'info')
             
         self.simulation_state['total_agents'] = len(demo_agents)
     
     def log_event(self, source: str, message: str, event_type: str = 'info', agent_id: str = None, target_id: str = None):
-        """Log simulation events"""
+        """Log simulation events to memory and blockchain (for critical events)."""
         event = {
             'timestamp': time.time(),
             'step': self.simulation_state['step'],
             'source': source,
             'message': message,
-            'type': event_type,  # 'info', 'communication', 'alert', 'success', 'warning', 'error'
+            'type': event_type,
             'agent_id': agent_id,
             'target_id': target_id
         }
         self.event_log.append(event)
+        
+        # ── Write critical events to blockchain ───────────────────────────────
+        # Error, success, and communication events are immutably recorded
+        if event_type in ['error', 'success', 'communication']:
+            blockchain_data = {
+                'event_type': event_type,
+                'source': source,
+                'message': message,
+                'step': self.simulation_state['step'],
+                'agent_id': agent_id,
+                'target_id': target_id
+            }
+            blockchain.add_block(blockchain_data)
     
     def simulation_step(self):
         """Execute one simulation step"""
@@ -466,11 +973,53 @@ class DLOGICSimulation:
             decision = self.mappo_router.mappo_policy_decision(agent_id, local_graph)
             
             # Deterministic logging based on actual state changes
-            # 1. P2P communication (Only if congestion > 0.6 and has neighbors, throttled by step)
-            if len(agent.neighbors) > 0 and neighborhood_info['congestion_metric'] > 0.6:
-                if self.simulation_state['step'] % max(5, int(100/len(agent.neighbors))) == 0:
+            # ── ECC P2P Secure Telemetry Exchange ─────────────────────────
+            # When this agent has neighbors, perform signed+encrypted telemetry
+            # exchange with each new neighbor (handshake on first contact) and
+            # log the verification result. Throttled to avoid log spam.
+            if len(agent.neighbors) > 0:
+                for neighbor_id in agent.neighbors:
+                    # One-shot handshake per new pair (cached internally)
+                    pair_key = (agent_id, neighbor_id)
+                    pair_key_rev = (neighbor_id, agent_id)
+                    handshake_done = (
+                        neighbor_id in p2p_channel._identities.get(agent_id, AgentECCIdentity(agent_id))._session_keys
+                        if agent_id in p2p_channel._identities else False
+                    )
+                    if not handshake_done:
+                        p2p_channel.handshake(agent_id, neighbor_id)
+                        self.log_event(
+                            agent_id,
+                            f'🔐 ECC Handshake: ECDH key exchange with {neighbor_id} — shared AES-256 session established',
+                            'communication', agent_id, neighbor_id
+                        )
+
+                # Periodic secure telemetry broadcast (every 5 steps, only to first neighbor)
+                if self.simulation_state['step'] % 5 == 0 and neighborhood_info['congestion_metric'] > 0:
                     neighbor_id = agent.neighbors[0]
-                    self.log_event(agent_id, f'P2P: Coordinating congestion avoidance with {neighbor_id}', 'communication', agent_id, neighbor_id)
+                    telemetry = {
+                        'agent_id': agent_id,
+                        'position': list(agent.position),
+                        'speed': round(agent.speed, 2),
+                        'battery': round(agent.battery, 1),
+                        'status': agent.status,
+                        'congestion': round(neighborhood_info['congestion_metric'], 3),
+                        'step': self.simulation_state['step']
+                    }
+                    result = p2p_channel.exchange_telemetry(agent_id, neighbor_id, telemetry)
+                    if result['verified']:
+                        self.log_event(
+                            agent_id,
+                            f'📡 ECC P2P → {neighbor_id}: signed telemetry verified ✓ '
+                            f'(pubkey …{result["pubkey_from"]})',
+                            'communication', agent_id, neighbor_id
+                        )
+                    else:
+                        self.log_event(
+                            agent_id,
+                            f'⚠️ ECC P2P → {neighbor_id}: telemetry verification FAILED ({result.get("reason","")})',
+                            'error', agent_id, neighbor_id
+                        )
             
             # 2. MAPPO Routing Decisions (Only log when behavior actually changes significantly)
             if decision['action_type'] == 'reroute' and agent.status != 'moving':
@@ -499,7 +1048,7 @@ class DLOGICSimulation:
             reward = self.execute_agent_decision(agent_id, decision)
             
             # Update policy with reward
-            self.mappo_router.update_policy_with_reward(agent_id, reward)
+            self.mappo_router.update_policy_with_reward(agent_id, reward, decision)
             
             decisions_made += 1
             performance_sum += reward
@@ -780,11 +1329,21 @@ def agent_details(agent_id):
             neighborhood_info = dlogic_sim.spatial_search.get_local_neighborhood_info(agent_id)
             local_graph = dlogic_sim.mappo_router.construct_local_graph(agent_id, neighborhood_info)
             
+            # Include ECC public key and active sessions
+            ecc_info = {
+                'public_key_hex': p2p_channel.get_public_key_hex(agent_id),
+                'active_sessions': []
+            }
+            if agent_id in p2p_channel._identities:
+                identity = p2p_channel._identities[agent_id]
+                ecc_info['active_sessions'] = list(identity._session_keys.keys())
+            
             return jsonify({
                 'agent': agent.to_dict(),
                 'neighborhood_info': neighborhood_info,
                 'local_graph': local_graph,
-                'policy': dlogic_sim.mappo_router.agent_policies.get(agent_id, {})
+                'policy': dlogic_sim.mappo_router.agent_policies.get(agent_id, {}),
+                'ecc': ecc_info
             })
     
     return jsonify({'error': 'Agent not found'}), 404
@@ -804,6 +1363,7 @@ def add_agent():
     
     with simulation_lock:
         dlogic_sim.spatial_search.add_agent(new_agent)
+        p2p_channel.register_agent(agent_id)
         dlogic_sim.simulation_state['total_agents'] = len(dlogic_sim.spatial_search.agents)
     
     return jsonify({
@@ -817,6 +1377,7 @@ def remove_agent(agent_id):
     with simulation_lock:
         if agent_id in dlogic_sim.spatial_search.agents:
             dlogic_sim.spatial_search.remove_agent(agent_id)
+            p2p_channel.deregister_agent(agent_id)
             dlogic_sim.simulation_state['total_agents'] = len(dlogic_sim.spatial_search.agents)
             return jsonify({
                 'status': 'success',
@@ -941,6 +1502,55 @@ def algorithms_info():
             ]
         }
     })
+
+@app.route('/p2p_status')
+def p2p_status():
+    """Get ECC P2P communication status and statistics"""
+    with simulation_lock:
+        stats = p2p_channel.get_stats()
+        
+        # Build per-agent detail
+        agent_ecc_details = []
+        for agent_id in dlogic_sim.spatial_search.agents.keys():
+            pubkey_hex = p2p_channel.get_public_key_hex(agent_id)
+            active_sessions = []
+            if agent_id in p2p_channel._identities:
+                identity = p2p_channel._identities[agent_id]
+                active_sessions = list(identity._session_keys.keys())
+            
+            agent_ecc_details.append({
+                'agent_id': agent_id,
+                'public_key': pubkey_hex[:32] + '...' if pubkey_hex else None,  # truncated
+                'active_sessions': active_sessions,
+                'session_count': len(active_sessions)
+            })
+        
+        return jsonify({
+            'stats': stats,
+            'agents': agent_ecc_details,
+            'description': 'ECC SECP256K1 + ECDH + AES-256-GCM secure P2P channel'
+        })
+
+@app.route('/blockchain_status')
+def blockchain_status():
+    """Get blockchain ledger status and recent blocks"""
+    with simulation_lock:
+        return jsonify({
+            'summary': blockchain.get_chain_summary(),
+            'recent_blocks': blockchain.get_recent_blocks(20),
+            'description': 'SHA-256 immutable audit ledger with proof-of-work'
+        })
+
+@app.route('/blockchain_verify')
+def blockchain_verify():
+    """Verify blockchain integrity"""
+    with simulation_lock:
+        is_valid = blockchain.is_chain_valid()
+        return jsonify({
+            'is_valid': is_valid,
+            'chain_length': len(blockchain.chain),
+            'message': 'Blockchain integrity verified ✓' if is_valid else 'Blockchain compromised ✗'
+        })
 
 # Serve React frontend for all non-API routes (SPA support)
 @app.route('/')
