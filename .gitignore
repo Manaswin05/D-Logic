@@ -55,7 +55,9 @@ RENDER_READY.md
 SIMULATION_LOGS_FEATURE.md
 USER_GUIDE.md
 
-# IDE
+# IDE & Agents
+.agents/
+Alter/
 .vscode/
 .idea/
 *.swp
